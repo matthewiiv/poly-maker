@@ -24,6 +24,42 @@ The repository consists of several interconnected modules:
 - `poly_stats`: Account statistics tracking
 - `poly_utils`: Shared utility functions
 - `data_updater`: Separate module for collecting market information
+- `copy_trading`: Standalone whale watcher / copy trader (see below)
+
+## Whale Watching & Copy Trading
+
+Ever read a headline like *"new Polymarket wallet just bet $800k on the CLARITY Act"* and wondered whether you could spot those wallets live — and ride along? `watch_whales.py` does exactly that, using only Polymarket's public APIs:
+
+1. **Tape scan** — polls `data-api.polymarket.com/trades` with a cash filter, so every fill on the platform worth ≥ $25k (configurable) is examined seconds after it prints.
+2. **Wallet forensics** — pulls the wallet's full `/activity` history: how old is it, how many lifetime trades, how concentrated? A wallet whose *first-ever action* is a six-figure conviction buy is the classic "insider-looking" pattern.
+3. **Scoring** — transparent 0–100 score (freshness, bet size, concentration, conviction pricing). Above the threshold: alert (console + optional Slack/Discord webhook), auto-watchlist, and optionally a copy.
+4. **Copying** — mirrors the whale with a tiny proportional size (default 0.1% of their bet, capped per trade/market/total), as a marketable limit order that refuses to chase if the price already moved more than a few cents past the whale's fill. Watchlisted wallets' follow-up buys and exits are mirrored too.
+
+```bash
+# Alert-only (no orders, no credentials needed)
+uv run python watch_whales.py
+
+# Dry-run copying: prints the exact orders it WOULD place
+uv run python watch_whales.py --copy
+
+# Follow specific wallets you already know about
+uv run python watch_whales.py --copy --wallets 0xabc...,0xdef...
+
+# Live copying (real money!) — needs PK/BROWSER_ADDRESS plus an explicit opt-in
+COPY_TRADER_LIVE=YES uv run python watch_whales.py --copy --live
+
+# One diagnostic pass over the last 24h of big prints
+uv run python watch_whales.py --once --lookback 86400 --copy
+```
+
+Run `uv run python watch_whales.py --help` for all knobs (thresholds, copy ratio, caps, slippage, poll rate, webhook).
+
+**Know what you're buying.** Copy trading whales is *not* free money, and this tool defaults to dry-run for a reason:
+
+- **You're late by design.** By the time a whale's prints hit the tape the book has often already repriced — the slippage guard will skip many of the juiciest signals (correctly).
+- **"Insider-looking" ≠ informed.** Fresh wallets bet big on *both* sides of the same market (the CLARITY Act market had fresh six-figure whales on YES *and* NO simultaneously). Some are hedging exposure elsewhere, some are laundering attention, some are just rich and wrong.
+- **Adverse selection cuts both ways.** If the whale really is informed, the people selling to you are the ones who know less — but if they're not, you've bought a moved price on noise.
+- **Sells only close copies.** The tool never shorts; a whale SELL just exits whatever you copied earlier.
 
 ## Requirements
 
