@@ -1,5 +1,5 @@
 """
-Wallet profiling and whale-signal scoring.
+Wallet profiling and insider-signal scoring.
 
 The scoring is deliberately simple and transparent: a handful of additive
 heuristics that describe the pattern from the news stories — a wallet that
@@ -59,7 +59,7 @@ def profile_wallet(wallet: str, activity: Optional[List[dict]] = None) -> Wallet
     )
 
 
-def score_whale(
+def score_insider(
     total_cash: float,
     avg_price: float,
     side: str,
@@ -113,10 +113,10 @@ def score_whale(
 
 
 @dataclass
-class WhaleSignal:
+class InsiderSignal:
     """
     An aggregated view of one wallet hitting one token on one side —
-    whales rarely fill in a single print, so nearby fills are bucketed.
+    insiders rarely fill in a single print, so nearby fills are bucketed.
     """
 
     wallet: str
@@ -152,7 +152,7 @@ class WhaleSignal:
             self.tx_hashes.append(tx)
 
     @classmethod
-    def from_trade(cls, trade: dict) -> "WhaleSignal":
+    def from_trade(cls, trade: dict) -> "InsiderSignal":
         sig = cls(
             wallet=trade["proxyWallet"],
             name=trade.get("name") or trade.get("pseudonym") or "",

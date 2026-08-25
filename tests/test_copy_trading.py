@@ -17,8 +17,8 @@ from copy_trading.executor import (
     size_copy_cash,
 )
 from copy_trading.market_class import MarketClass, classify_event
-from copy_trading.scanner import WhaleScanner
-from copy_trading.signals import WalletProfile, profile_wallet, score_whale
+from copy_trading.scanner import InsiderScanner
+from copy_trading.signals import WalletProfile, profile_wallet, score_insider
 from copy_trading.state import StateStore
 
 
@@ -53,7 +53,7 @@ def make_trade(ts=NOW, size=100_000.0, price=0.85, side="BUY", tx="0xabc", walle
         "eventSlug": "clarity-act",
         "outcome": "No",
         "outcomeIndex": 1,
-        "name": "whale",
+        "name": "insider",
         "transactionHash": tx,
     }
 
@@ -115,9 +115,9 @@ def test_profile_wallet_from_activity():
     assert p.age_days(NOW) == pytest.approx(7200 / 86400, abs=1e-4)
 
 
-def test_fresh_whale_scores_above_default_threshold():
+def test_fresh_insider_scores_above_default_threshold():
     cfg = CopyConfig()
-    score, reasons = score_whale(350_000, 0.85, "BUY", fresh_profile(), cfg, NOW)
+    score, reasons = score_insider(350_000, 0.85, "BUY", fresh_profile(), cfg, NOW)
     assert score >= cfg.alert_score
     assert any(r.startswith("fresh-wallet") for r in reasons)
     assert any(r.startswith("big-bet") for r in reasons)
@@ -125,7 +125,7 @@ def test_fresh_whale_scores_above_default_threshold():
 
 def test_veteran_wallet_scores_below_threshold():
     cfg = CopyConfig()
-    score, _ = score_whale(60_000, 0.85, "BUY", veteran_profile(), cfg, NOW)
+    score, _ = score_insider(60_000, 0.85, "BUY", veteran_profile(), cfg, NOW)
     # A big bet alone (no freshness signals) should not trip the alert.
     assert score < cfg.alert_score
 
@@ -142,7 +142,7 @@ def test_round_to_tick_directional():
 
 
 def test_plan_buy_price_caps_and_skips():
-    # whale at 0.85, ask at 0.86, 3c allowance -> pay up to 0.88
+    # insider at 0.85, ask at 0.86, 3c allowance -> pay up to 0.88
     assert plan_buy_price(0.85, 0.86, 0.01, 0.03) == pytest.approx(0.88)
     # ask ran to 0.90 -> don't chase
     assert plan_buy_price(0.85, 0.90, 0.01, 0.03) is None
@@ -199,14 +199,14 @@ def make_executor(tmp_path, book=None, **cfg_kwargs):
 
 
 def bucket_from(trade):
-    from copy_trading.signals import WhaleSignal
+    from copy_trading.signals import InsiderSignal
 
-    return WhaleSignal.from_trade(trade)
+    return InsiderSignal.from_trade(trade)
 
 
 def test_executor_buy_plan_and_simulated_fill(tmp_path):
     _, state, ex = make_executor(tmp_path)
-    sig = bucket_from(make_trade(size=100_000, price=0.85))  # $85k whale buy
+    sig = bucket_from(make_trade(size=100_000, price=0.85))  # $85k insider buy
     plan = ex.plan(sig)
     assert plan is not None and plan.side == "BUY"
     assert plan.price == pytest.approx(0.88)  # 0.85 + 0.03 slippage cap
@@ -270,7 +270,7 @@ def make_scanner(
         if with_executor
         else None
     )
-    scanner = WhaleScanner(
+    scanner = InsiderScanner(
         cfg,
         state,
         executor,
@@ -422,7 +422,7 @@ def test_classify_event_insider_paths():
 
 def test_scanner_insider_only_gating(tmp_path):
     trades = [make_trade(ts=NOW - 10, tx="0xsport")]
-    # Default config is insider-only: a sports whale produces no alert.
+    # Default config is insider-only: a sports insider produces no alert.
     state, scanner = make_scanner(tmp_path, trades, fresh_profile(), mclass=SPORTS_CLASS)
     scanner.poll_once(NOW)
     assert not state.alerted and not state.is_watched(WALLET)

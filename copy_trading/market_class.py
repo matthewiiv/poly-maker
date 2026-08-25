@@ -1,5 +1,5 @@
 """
-Classify Polymarket markets by whether a fresh-wallet whale there could
+Classify Polymarket markets by whether a fresh-wallet insider there could
 plausibly be trading on insider knowledge.
 
 A market is insider-plausible when its outcome is decided (or known) by a

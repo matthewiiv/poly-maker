@@ -1,5 +1,5 @@
 """
-JSON-file persistence for the whale watcher.
+JSON-file persistence for the insider watcher.
 
 Keeps just enough state to survive restarts without double-alerting or
 double-copying: which fills we've already processed, which wallets are on

@@ -1,27 +1,27 @@
 """
-Watch Polymarket for "fresh wallet suddenly bets big" whales — and
+Watch Polymarket for "fresh wallet suddenly bets big" insiders — and
 optionally copy-trade them.
 
 Modes (least to most dangerous):
 
-    # 1. Alert-only: print/webhook whale alerts, place no orders
-    uv run python watch_whales.py
+    # 1. Alert-only: print/webhook insider alerts, place no orders
+    uv run python watch_insiders.py
 
     # 2. Dry-run copying: also print the exact orders it WOULD place,
     #    tracking a simulated portfolio in copy_trading/state.json
-    uv run python watch_whales.py --copy
+    uv run python watch_insiders.py --copy
 
     # 3. Live copying: real orders via your PK/BROWSER_ADDRESS credentials.
     #    Requires BOTH the --live flag and COPY_TRADER_LIVE=YES in the env.
-    uv run python watch_whales.py --copy --live
+    uv run python watch_insiders.py --copy --live
 
 Follow specific wallets (e.g. one you read about in the news):
 
-    uv run python watch_whales.py --copy --wallets 0x19c3b385be5667154fc69c87d8f7914be84087c1
+    uv run python watch_insiders.py --copy --wallets 0x19c3b385be5667154fc69c87d8f7914be84087c1
 
 Single diagnostic pass over the recent tape:
 
-    uv run python watch_whales.py --once --lookback 86400
+    uv run python watch_insiders.py --once --lookback 86400
 """
 
 import argparse
@@ -30,13 +30,13 @@ import sys
 
 from dotenv import load_dotenv
 
-from copy_trading import CopyConfig, CopyExecutor, StateStore, WhaleScanner
+from copy_trading import CopyConfig, CopyExecutor, StateStore, InsiderScanner
 from copy_trading.scanner import DEFAULT_MAX_FILL_AGE_SECS
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Polymarket whale watcher / copy trader",
+        description="Polymarket insider watcher / copy trader",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     d = CopyConfig()
@@ -84,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--ratio",
         type=float,
         default=d.copy_ratio,
-        help="fraction of the whale's cash size to mirror",
+        help="fraction of the insider's cash size to mirror",
     )
     cp.add_argument(
         "--max-per-trade", type=float, default=d.max_per_trade_usdc, help="max USDC per copy order"
@@ -105,7 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--slippage",
         type=float,
         default=d.max_slippage,
-        help="max price move (probability points) past the whale's fill",
+        help="max price move (probability points) past the insider's fill",
     )
     cp.add_argument(
         "--follow-min-cash",
@@ -171,7 +171,7 @@ def main(argv=None) -> int:
     state = StateStore(state_path)
 
     executor = CopyExecutor(cfg, state, live=args.live) if args.copy else None
-    scanner = WhaleScanner(cfg, state, executor, max_fill_age_secs=args.lookback)
+    scanner = InsiderScanner(cfg, state, executor, max_fill_age_secs=args.lookback)
 
     if args.wallets:
         scanner.seed_watchlist(args.wallets.split(","))

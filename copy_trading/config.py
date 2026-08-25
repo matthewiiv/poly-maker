@@ -5,7 +5,7 @@ from typing import Optional
 @dataclass
 class CopyConfig:
     """
-    Tunable parameters for whale detection and copy trading.
+    Tunable parameters for insider detection and copy trading.
 
     All cash amounts are in USDC. Prices are probabilities in (0, 1).
     """
@@ -17,7 +17,7 @@ class CopyConfig:
 
     # A wallet/asset/side "bucket" (fills grouped within aggregation_window_secs)
     # whose score reaches this threshold triggers an alert (and a copy, if
-    # copying is enabled). Score is 0-100, see signals.score_whale.
+    # copying is enabled). Score is 0-100, see signals.score_insider.
     alert_score: int = 60
 
     # Wallet age bands used by the scorer. A wallet whose first on-platform
@@ -32,19 +32,19 @@ class CopyConfig:
     # Cash size that counts as a headline-grade bet on its own.
     big_bet_usdc: float = 100_000.0
 
-    # Whales rarely fill in one print; fills from the same wallet on the same
+    # Insiders rarely fill in one print; fills from the same wallet on the same
     # token and side within this window are aggregated into one signal.
     aggregation_window_secs: float = 180.0
 
     # Only alert on insider-plausible markets (legislation, listings,
     # appointments, rulings — outcomes a small group knows before the
     # public). Sports/esports, price-level bets and rapid recurring series
-    # are excluded: fresh whales there are betting syndicates, not insiders.
+    # are excluded: big fresh wallets there are betting syndicates, not insiders.
     # Disable via --all-markets to watch everything.
     insider_only: bool = True
 
     # --- Copying -----------------------------------------------------------
-    # Fraction of the whale's cash size that we mirror (0.001 = $100 copy of a
+    # Fraction of the insider's cash size that we mirror (0.001 = $100 copy of a
     # $100k bet), further limited by the caps below.
     copy_ratio: float = 0.001
 
@@ -54,7 +54,7 @@ class CopyConfig:
     max_total_usdc: float = 1_000.0
 
     # Skip the copy if the market has already moved more than this many
-    # probability points past the whale's average fill price (chasing guard).
+    # probability points past the insider's average fill price (chasing guard).
     max_slippage: float = 0.03
 
     # Don't bother placing dust orders below this cash value.
@@ -69,5 +69,5 @@ class CopyConfig:
     poll_secs: float = 4.0
     state_path: str = "copy_trading/state.json"
 
-    # Optional webhook (Slack/Discord compatible) for whale alerts.
+    # Optional webhook (Slack/Discord compatible) for insider alerts.
     webhook_url: Optional[str] = None

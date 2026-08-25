@@ -1,17 +1,17 @@
 """
-Turns a whale signal into a copy order.
+Turns an insider signal into a copy order.
 
 Dry-run by default: the executor prints exactly what it would do and tracks
 a simulated position in the state file. In live mode it places real orders
 through the same PolymarketClient the market maker uses.
 
 Copy mechanics:
-- BUY signals are mirrored with cash = whale_cash * copy_ratio, clamped by
+- BUY signals are mirrored with cash = insider_cash * copy_ratio, clamped by
   per-trade / per-market / total caps, as a marketable limit order priced at
-  the whale's average fill plus a slippage allowance. If the book has already
+  the insider's average fill plus a slippage allowance. If the book has already
   run away past that allowance we skip instead of chasing.
 - SELL signals from watched wallets close whatever we copied on that token
-  (the whale is leaving; follow them out). We never short.
+  (the insider is leaving; follow them out). We never short.
 """
 
 import math
@@ -23,7 +23,7 @@ import requests
 
 from copy_trading.config import CopyConfig
 from copy_trading.data_api import best_prices, get_book
-from copy_trading.signals import WhaleSignal
+from copy_trading.signals import InsiderSignal
 from copy_trading.state import StateStore
 
 
@@ -40,39 +40,39 @@ def round_to_tick(price: float, tick: float, side: str) -> float:
 
 
 def plan_buy_price(
-    whale_price: float, best_ask: Optional[float], tick: float, max_slippage: float
+    insider_price: float, best_ask: Optional[float], tick: float, max_slippage: float
 ) -> Optional[float]:
     """
     Limit price for a copy BUY, or None if the market already moved more than
-    max_slippage past the whale's price (don't chase).
+    max_slippage past the insider's price (don't chase).
     """
-    cap = whale_price + max_slippage
+    cap = insider_price + max_slippage
     if best_ask is not None and best_ask > cap + 1e-9:
         return None
     return round_to_tick(cap, tick, "BUY")
 
 
 def plan_sell_price(
-    whale_price: float, best_bid: Optional[float], tick: float, max_slippage: float
+    insider_price: float, best_bid: Optional[float], tick: float, max_slippage: float
 ) -> Optional[float]:
     """
     Limit price for a copy SELL, or None if the bid already collapsed more
-    than max_slippage below the whale's exit price.
+    than max_slippage below the insider's exit price.
     """
-    floor = whale_price - max_slippage
+    floor = insider_price - max_slippage
     if best_bid is None or best_bid < floor - 1e-9:
         return None
     return round_to_tick(max(floor, tick), tick, "SELL")
 
 
 def size_copy_cash(
-    whale_cash: float, cfg: CopyConfig, market_spent: float, total_spent: float
+    insider_cash: float, cfg: CopyConfig, market_spent: float, total_spent: float
 ) -> float:
     """
     Cash to commit to a copy BUY after applying the ratio and all caps.
     Returns 0.0 when the remaining budget is below min_copy_cash.
     """
-    cash = whale_cash * cfg.copy_ratio
+    cash = insider_cash * cfg.copy_ratio
     cash = min(
         cash,
         cfg.max_per_trade_usdc,
@@ -126,14 +126,14 @@ class CopyExecutor:
         return self._client
 
     # -- planning -----------------------------------------------------------
-    def plan(self, signal: WhaleSignal) -> Optional[CopyPlan]:
+    def plan(self, signal: InsiderSignal) -> Optional[CopyPlan]:
         if signal.side == "BUY":
             return self._plan_buy(signal)
         return self._plan_sell(signal)
 
-    def _fetch_book(self, signal: WhaleSignal) -> Optional[dict]:
-        # A 404 means the market is closed/resolved (e.g. a whale print from a
-        # game that already ended) — nothing left to copy.
+    def _fetch_book(self, signal: InsiderSignal) -> Optional[dict]:
+        # A 404 means the market is closed/resolved (e.g. a print in a market
+        # that already resolved) — nothing left to copy.
         try:
             return self.book_fn(signal.asset)
         except requests.HTTPError as ex:
@@ -142,7 +142,7 @@ class CopyExecutor:
                 return None
             raise
 
-    def _plan_buy(self, signal: WhaleSignal) -> Optional[CopyPlan]:
+    def _plan_buy(self, signal: InsiderSignal) -> Optional[CopyPlan]:
         cash = size_copy_cash(
             signal.total_cash,
             self.cfg,
@@ -166,7 +166,7 @@ class CopyExecutor:
             self._log(
                 signal,
                 f"skip buy: ask {best_ask} moved more than {self.cfg.max_slippage} "
-                f"past whale price {signal.avg_price:.3f}",
+                f"past insider price {signal.avg_price:.3f}",
             )
             return None
 
@@ -194,7 +194,7 @@ class CopyExecutor:
             note=f"mirror {signal.side} of ${signal.total_cash:,.0f} by {signal.wallet}",
         )
 
-    def _plan_sell(self, signal: WhaleSignal) -> Optional[CopyPlan]:
+    def _plan_sell(self, signal: InsiderSignal) -> Optional[CopyPlan]:
         held = self.state.holdings.get(signal.asset)
         if not held or held["shares"] <= 0:
             self._log(signal, "skip sell: no copied position on this token")
@@ -213,7 +213,7 @@ class CopyExecutor:
             self._log(
                 signal,
                 f"skip sell: bid {best_bid} collapsed more than {self.cfg.max_slippage} "
-                f"below whale exit {signal.avg_price:.3f}",
+                f"below insider exit {signal.avg_price:.3f}",
             )
             return None
 
@@ -229,11 +229,11 @@ class CopyExecutor:
             shares=shares,
             cash=round(shares * price, 2),
             neg_risk=neg_risk,
-            note=f"whale {signal.wallet} sold ${signal.total_cash:,.0f}; exiting copy",
+            note=f"insider {signal.wallet} sold ${signal.total_cash:,.0f}; exiting copy",
         )
 
     # -- execution ----------------------------------------------------------
-    def execute(self, signal: WhaleSignal, plan: CopyPlan) -> bool:
+    def execute(self, signal: InsiderSignal, plan: CopyPlan) -> bool:
         mode = "LIVE" if self.live else "DRY-RUN"
         print(
             f"[{_now()}] [{mode}] {plan.side} {plan.shares} shares of "
@@ -265,7 +265,7 @@ class CopyExecutor:
         self.state.save()
         return True
 
-    def _log(self, signal: WhaleSignal, msg: str) -> None:
+    def _log(self, signal: InsiderSignal, msg: str) -> None:
         print(f"[{_now()}] [{signal.title[:50]}] {msg}")
 
 

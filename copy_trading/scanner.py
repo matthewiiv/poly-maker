@@ -1,5 +1,5 @@
 """
-The polling loop that watches Polymarket's trade tape for whales.
+The polling loop that watches Polymarket's trade tape for insiders.
 
 Two detection paths:
 
@@ -23,17 +23,17 @@ from copy_trading.config import CopyConfig
 from copy_trading.data_api import get_large_trades, get_wallet_trades, trade_cash
 from copy_trading.executor import CopyExecutor
 from copy_trading.market_class import MarketClassifier
-from copy_trading.signals import WalletProfile, WhaleSignal, profile_wallet, score_whale
+from copy_trading.signals import WalletProfile, InsiderSignal, profile_wallet, score_insider
 from copy_trading.state import StateStore
 
-# Ignore tape entries older than this by default — copying a whale minutes
+# Ignore tape entries older than this by default — copying an insider minutes
 # late is already marginal; copying one from hours ago is just buying the move.
 DEFAULT_MAX_FILL_AGE_SECS = 900.0
 
 PROFILE_CACHE_TTL_SECS = 600.0
 
 
-class WhaleScanner:
+class InsiderScanner:
     """
     Args:
         cfg: thresholds and copy parameters
@@ -63,7 +63,7 @@ class WhaleScanner:
         self.wallet_trades_fn = wallet_trades_fn
         self.classifier = classifier or MarketClassifier()
 
-        self.buckets: Dict[str, WhaleSignal] = {}
+        self.buckets: Dict[str, InsiderSignal] = {}
         self._profile_cache: Dict[str, Tuple[WalletProfile, float]] = {}
         self._polls = 0
 
@@ -148,7 +148,7 @@ class WhaleScanner:
             bucket is None
             or int(trade["timestamp"]) - bucket.last_ts > self.cfg.aggregation_window_secs
         ):
-            bucket = WhaleSignal.from_trade(trade)
+            bucket = InsiderSignal.from_trade(trade)
             self.buckets[bucket_key] = bucket
         else:
             bucket.add_fill(trade)
@@ -156,7 +156,7 @@ class WhaleScanner:
         self._evaluate_bucket(bucket_key, bucket, now)
         return True
 
-    def _evaluate_bucket(self, bucket_key: str, bucket: WhaleSignal, now: float) -> None:
+    def _evaluate_bucket(self, bucket_key: str, bucket: InsiderSignal, now: float) -> None:
         # One alert/copy per bucket; keyed with first_ts so the same wallet
         # re-hitting the same token hours later is treated as a fresh event.
         alert_key = f"{bucket_key}:{bucket.first_ts}"
@@ -171,7 +171,7 @@ class WhaleScanner:
             self._copy(bucket)
             return
 
-        # A whale *bet* is a BUY. Large sells from unknown wallets are mostly
+        # An insider *bet* is a BUY. Large sells from unknown wallets are mostly
         # winners cashing out (often at ~$1.00) — nothing to copy or watch.
         if bucket.side != "BUY":
             return
@@ -189,7 +189,7 @@ class WhaleScanner:
         if profile is None:
             return  # profiling failed; a later fill in this bucket retries
 
-        score, reasons = score_whale(
+        score, reasons = score_insider(
             bucket.total_cash, bucket.avg_price, bucket.side, profile, self.cfg, now
         )
         if score < self.cfg.alert_score:
@@ -205,10 +205,10 @@ class WhaleScanner:
             reason=f"score {score}: {', '.join(reasons)} on '{bucket.title}'",
             source="auto",
         )
-        self._announce(bucket, profile, score, reasons, kind="WHALE ALERT")
+        self._announce(bucket, profile, score, reasons, kind="INSIDER ALERT")
         self._copy(bucket)
 
-    def _copy(self, bucket: WhaleSignal) -> None:
+    def _copy(self, bucket: InsiderSignal) -> None:
         if not self.executor:
             return
         try:
@@ -239,7 +239,7 @@ class WhaleScanner:
 
     def _announce(
         self,
-        bucket: WhaleSignal,
+        bucket: InsiderSignal,
         profile: Optional[WalletProfile],
         score: Optional[int],
         reasons: List[str],
@@ -256,7 +256,7 @@ class WhaleScanner:
         score_txt = f" score={score}" if score is not None else ""
 
         text = (
-            f"🐋 {kind}{score_txt} | {who} ({wallet_short}) "
+            f"🕵️ {kind}{score_txt} | {who} ({wallet_short}) "
             f"{bucket.side} '{bucket.outcome}' @ {bucket.avg_price:.3f} — "
             f"${bucket.total_cash:,.0f} across {bucket.fill_count} fill(s) | "
             f"{bucket.title}{wallet_bits} | "

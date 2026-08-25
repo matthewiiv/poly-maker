@@ -24,37 +24,37 @@ The repository consists of several interconnected modules:
 - `poly_stats`: Account statistics tracking
 - `poly_utils`: Shared utility functions
 - `data_updater`: Separate module for collecting market information
-- `copy_trading`: Standalone whale watcher / copy trader (see below)
+- `copy_trading`: Standalone insider watcher / copy trader (see below)
 
-## Whale Watching & Copy Trading
+## Insider Watching & Copy Trading
 
-Ever read a headline like *"new Polymarket wallet just bet $800k on the CLARITY Act"* and wondered whether you could spot those wallets live — and ride along? `watch_whales.py` does exactly that, using only Polymarket's public APIs:
+Ever read a headline like *"new Polymarket wallet just bet $800k on the CLARITY Act"* and wondered whether you could spot those wallets live — and ride along? `watch_insiders.py` does exactly that, using only Polymarket's public APIs:
 
 1. **Tape scan** — polls `data-api.polymarket.com/trades` with a cash filter, so every fill on the platform worth ≥ $25k (configurable) is examined seconds after it prints.
 2. **Wallet forensics** — pulls the wallet's full `/activity` history: how old is it, how many lifetime trades, how concentrated? A wallet whose *first-ever action* is a six-figure conviction buy is the classic "insider-looking" pattern.
 3. **Scoring** — transparent 0–100 score (freshness, bet size, concentration, conviction pricing). Above the threshold: alert (console + optional Slack/Discord webhook), auto-watchlist, and optionally a copy.
-4. **Copying** — mirrors the whale with a tiny proportional size (default 0.1% of their bet, capped per trade/market/total), as a marketable limit order that refuses to chase if the price already moved more than a few cents past the whale's fill. Watchlisted wallets' follow-up buys and exits are mirrored too.
+4. **Copying** — mirrors the insider with a tiny proportional size (default 0.1% of their bet, capped per trade/market/total), as a marketable limit order that refuses to chase if the price already moved more than a few cents past the insider's fill. Watchlisted wallets' follow-up buys and exits are mirrored too.
 
-**Insider-only by default.** Most fresh-wallet whales are sports syndicates, not insiders, so the scanner only alerts on *insider-plausible* markets — outcomes a small group of humans knows before the public (legislation, listings, appointments, rulings, M&A). Classification uses Polymarket's own event tags plus structural signals (`sportsMarketType`/`gameStartTime`, price-series tags, rapid recurring series) with an announcement-verb fallback on the question text — see `copy_trading/market_class.py`. Pass `--all-markets` to watch everything, sports included.
+**Insider-only by default.** Most fresh-wallet insiders are sports syndicates, not insiders, so the scanner only alerts on *insider-plausible* markets — outcomes a small group of humans knows before the public (legislation, listings, appointments, rulings, M&A). Classification uses Polymarket's own event tags plus structural signals (`sportsMarketType`/`gameStartTime`, price-series tags, rapid recurring series) with an announcement-verb fallback on the question text — see `copy_trading/market_class.py`. Pass `--all-markets` to watch everything, sports included.
 
 ```bash
 # Alert-only (no orders, no credentials needed)
-uv run python watch_whales.py
+uv run python watch_insiders.py
 
 # Dry-run copying: prints the exact orders it WOULD place
-uv run python watch_whales.py --copy
+uv run python watch_insiders.py --copy
 
 # Follow specific wallets you already know about
-uv run python watch_whales.py --copy --wallets 0xabc...,0xdef...
+uv run python watch_insiders.py --copy --wallets 0xabc...,0xdef...
 
 # Live copying (real money!) — needs PK/BROWSER_ADDRESS plus an explicit opt-in
-COPY_TRADER_LIVE=YES uv run python watch_whales.py --copy --live
+COPY_TRADER_LIVE=YES uv run python watch_insiders.py --copy --live
 
 # One diagnostic pass over the last 24h of big prints
-uv run python watch_whales.py --once --lookback 86400 --copy
+uv run python watch_insiders.py --once --lookback 86400 --copy
 ```
 
-Run `uv run python watch_whales.py --help` for all knobs (thresholds, copy ratio, caps, slippage, poll rate, webhook).
+Run `uv run python watch_insiders.py --help` for all knobs (thresholds, copy ratio, caps, slippage, poll rate, webhook).
 
 ### Backtesting
 
@@ -62,10 +62,10 @@ Run `uv run python watch_whales.py --help` for all knobs (thresholds, copy ratio
 
 ```bash
 uv run python -m copy_trading.backtest --sweep            # full sweep + sensitivity matrix
-uv run python -m copy_trading.backtest --case-study <conditionId>   # replay one market's whales
+uv run python -m copy_trading.backtest --case-study <conditionId>   # replay one market's insiders
 ```
 
-Findings from the Jul 7 – Aug 25 2026 window (10,100 fills ≥ $25k, 6,485 whale-buy buckets, 6,208 resolved):
+Findings from the Jul 7 – Aug 25 2026 window (10,100 fills ≥ $25k, 6,485 insider-buy buckets, 6,208 resolved):
 
 | group | n resolved | win rate | avg return / $1 (1¢ slippage) |
 |---|---|---|---|
@@ -73,14 +73,14 @@ Findings from the Jul 7 – Aug 25 2026 window (10,100 fills ≥ $25k, 6,485 wha
 | all alerts (score ≥ 60) | 197 | 61.9% | −1.3% |
 | control: all other big buys | 6,011 | 68.5% | −1.9% |
 
-The fresh-wallet filter finds genuine signal at the higher score bands (edge survives up to ~3¢ of slippage), but the median alert is a **sports syndicate** bankrolling a disposable wallet, not a political insider — and fresh whales lose too (one dropped $517k on "France to advance" and got zeroed). Treat the score as a filter, not an oracle.
+The fresh-wallet filter finds genuine signal at the higher score bands (edge survives up to ~3¢ of slippage), but the median alert is a **sports syndicate** bankrolling a disposable wallet, not a political insider — and fresh six-figure wallets lose too (one dropped $517k on "France to advance" and got zeroed). Treat the score as a filter, not an oracle.
 
-**Know what you're buying.** Copy trading whales is *not* free money, and this tool defaults to dry-run for a reason:
+**Know what you're buying.** Copy trading insiders is *not* free money, and this tool defaults to dry-run for a reason:
 
-- **You're late by design.** By the time a whale's prints hit the tape the book has often already repriced — the slippage guard will skip many of the juiciest signals (correctly).
-- **"Insider-looking" ≠ informed.** Fresh wallets bet big on *both* sides of the same market (the CLARITY Act market had fresh six-figure whales on YES *and* NO simultaneously). Some are hedging exposure elsewhere, some are laundering attention, some are just rich and wrong.
-- **Adverse selection cuts both ways.** If the whale really is informed, the people selling to you are the ones who know less — but if they're not, you've bought a moved price on noise.
-- **Sells only close copies.** The tool never shorts; a whale SELL just exits whatever you copied earlier.
+- **You're late by design.** By the time an insider's prints hit the tape the book has often already repriced — the slippage guard will skip many of the juiciest signals (correctly).
+- **"Insider-looking" ≠ informed.** Fresh wallets bet big on *both* sides of the same market (the CLARITY Act market had fresh six-figure wallets on YES *and* NO simultaneously). Some are hedging exposure elsewhere, some are laundering attention, some are just rich and wrong.
+- **Adverse selection cuts both ways.** If the insider really is informed, the people selling to you are the ones who know less — but if they're not, you've bought a moved price on noise.
+- **Sells only close copies.** The tool never shorts; a watched wallet's SELL just exits whatever you copied earlier.
 
 ## Requirements
 

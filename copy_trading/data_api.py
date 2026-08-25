@@ -5,7 +5,7 @@ Everything here is unauthenticated and read-only:
 
 - Data API (https://data-api.polymarket.com):
     /trades    - platform-wide trade tape; supports filtering by minimum cash
-                 value, which is what makes whale-spotting a one-liner
+                 value, which is what makes insider-spotting a one-liner
     /activity  - a wallet's full on-platform history (trades, splits, merges,
                  redeems); the earliest record dates the wallet
     /positions - a wallet's current open positions

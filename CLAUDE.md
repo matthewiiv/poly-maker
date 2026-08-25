@@ -14,7 +14,7 @@ is an append-only development log:
 
 ## Project notes
 
-- `copy_trading/` is the insider whale watcher / copy trader; `watch_whales.py`
+- `copy_trading/` is the insider watcher / copy trader; `watch_insiders.py`
   is its CLI. It is insider-only by default (see `copy_trading/market_class.py`);
   `--all-markets` restores the broad feed.
 - Backtests: `uv run python -m copy_trading.backtest` (point-in-time wallet

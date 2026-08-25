@@ -1,5 +1,5 @@
 """
-Historical backtest for the whale scanner.
+Historical backtest for the insider scanner.
 
 Replays weeks of Polymarket's large-trade tape through the exact same
 bucketing + scoring logic the live scanner uses, with wallet profiles
@@ -13,7 +13,7 @@ scanner would have fired on. Outcomes are then measured against market
 resolutions (or current prices for still-open markets), so we can ask the
 two questions that matter:
 
-  1. Would the scanner have caught a specific whale (and how fast)?
+  1. Would the scanner have caught a specific insider (and how fast)?
   2. Do high-scoring "fresh wallet bets big" signals actually win more
      often than ordinary big bets — i.e. do they look informed?
 
@@ -38,7 +38,7 @@ from typing import Dict, List, Optional, Tuple
 from copy_trading.config import CopyConfig
 from copy_trading.data_api import ACTIVITY_PAGE_LIMIT, DATA_API, _get
 from copy_trading.market_class import classify_event
-from copy_trading.signals import WalletProfile, WhaleSignal, score_whale
+from copy_trading.signals import WalletProfile, InsiderSignal, score_insider
 
 GAMMA_API = "https://gamma-api.polymarket.com"
 
@@ -319,7 +319,7 @@ def replay(
     cfg.min_trade_cash — exactly when the live scanner would have evaluated
     it — using the wallet's profile as of that moment.
     """
-    buckets: Dict[str, WhaleSignal] = {}
+    buckets: Dict[str, InsiderSignal] = {}
     evaluated: Dict[str, Candidate] = {}
 
     for trade in fills:
@@ -329,7 +329,7 @@ def replay(
 
         bucket = buckets.get(key)
         if bucket is None or ts - bucket.last_ts > cfg.aggregation_window_secs:
-            bucket = WhaleSignal.from_trade(trade)
+            bucket = InsiderSignal.from_trade(trade)
             buckets[key] = bucket
         else:
             bucket.add_fill(trade)
@@ -339,7 +339,7 @@ def replay(
             evaluated[bucket_id].final_cash = bucket.total_cash
             evaluated[bucket_id].fills = bucket.fill_count
             continue
-        # A whale *bet* is a BUY; large sells are mostly winners cashing out
+        # An insider *bet* is a BUY; large sells are mostly winners cashing out
         # (often at ~$1.00) and carry no copyable information.
         if bucket.side != "BUY":
             continue
@@ -350,7 +350,7 @@ def replay(
             continue
 
         profile = profile_at(wallet, activity, ts)
-        score, reasons = score_whale(
+        score, reasons = score_insider(
             bucket.total_cash, bucket.avg_price, bucket.side, profile, cfg, now=ts
         )
         evaluated[bucket_id] = Candidate(
@@ -415,7 +415,7 @@ def evaluate(
 ) -> None:
     """
     Attach outcomes. BUY candidates only (the copier never shorts): entry is
-    the whale's average price plus a slippage penalty (we're always late);
+    the insider's average price plus a slippage penalty (we're always late);
     exit is the resolved outcome (1/0) or the current price for open markets.
     """
     for c in candidates:
@@ -509,7 +509,7 @@ def format_table(rows: Dict[str, dict]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Case study: replay every whale on one market
+# Case study: replay every insider on one market
 # ---------------------------------------------------------------------------
 
 
@@ -547,7 +547,7 @@ def case_study(condition_id: str, min_cash: float, cfg: CopyConfig, cache_dir: s
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="Backtest the whale scanner on historical tape")
+    p = argparse.ArgumentParser(description="Backtest the insider scanner on historical tape")
     p.add_argument("--min-cash", type=float, default=25_000.0)
     p.add_argument("--alert-score", type=int, default=60)
     p.add_argument("--fresh-days", type=float, default=3.0)
@@ -555,7 +555,7 @@ def main(argv=None) -> int:
         "--slippage-penalty",
         type=float,
         default=0.01,
-        help="assumed entry price disadvantage vs the whale's fill",
+        help="assumed entry price disadvantage vs the insider's fill",
     )
     p.add_argument("--cache-dir", default=DEFAULT_CACHE_DIR)
     p.add_argument(
@@ -617,7 +617,7 @@ def main(argv=None) -> int:
 
     alerts = [c for c in candidates if c.score >= cfg.alert_score]
     alerts.sort(key=lambda c: -c.final_cash)
-    print(f"\nTop alerts by whale size ({min(15, len(alerts))} of {len(alerts)}):")
+    print(f"\nTop alerts by bet size ({min(15, len(alerts))} of {len(alerts)}):")
     for c in alerts[:15]:
         when = time.strftime("%m-%d %H:%M", time.gmtime(c.eval_ts))
         ret = f"{c.ret_per_dollar:+.1%}" if c.ret_per_dollar is not None else "  n/a"
