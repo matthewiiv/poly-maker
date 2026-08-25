@@ -128,14 +128,19 @@ def _window_rows(start: str, end: str, min_volume: float) -> List[dict]:
 
 
 def fetch_window(start: str, end: str, min_volume: float, cache_dir: str) -> List[dict]:
-    """One end-date window, bisected recursively until it fits under the cap."""
+    """
+    One end-date window, bisected recursively until it fits under the offset
+    cap — and also on persistent server errors, which sometimes clear at
+    smaller window sizes. A 1-day window that still fails is skipped, not
+    fatal to the whole enumeration.
+    """
     key = f"deep/markets/{start[:10]}_{end[:10]}_{int(min_volume)}.json"
     try:
         return _cached(cache_dir, key, lambda: _window_rows(start, end, min_volume))
-    except _OffsetCap:
+    except (_OffsetCap, requests.HTTPError) as ex:
         t0, t1 = _iso_ts(start), _iso_ts(end)
         if t1 - t0 <= 86_400:
-            print(f"[deep] WARNING: 1-day window {start[:10]} still over the cap; truncated")
+            print(f"[deep] WARNING: skipping 1-day window {start[:10]} ({type(ex).__name__})")
             return []
         mid = _ts_iso(t0 + (t1 - t0) // 2)
         return fetch_window(start, mid, min_volume, cache_dir) + fetch_window(
