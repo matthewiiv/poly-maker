@@ -82,8 +82,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--min-price",
         type=float,
         default=d.min_alert_price,
-        help="ignore buys below this price (sub-65c entries backtested as toss-up "
-        "gambling; try 0.65)",
+        help="optional price floor for alerts (red-team audit: price cuts reflect "
+        "favorite-longshot bias, not insider signal — see the log)",
     )
 
     cp = p.add_argument_group("copying")

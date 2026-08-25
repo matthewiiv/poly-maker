@@ -65,15 +65,9 @@ uv run python -m copy_trading.backtest --sweep            # full sweep + sensiti
 uv run python -m copy_trading.backtest --case-study <conditionId>   # replay one market's insiders
 ```
 
-Findings from the Jul 7 – Aug 25 2026 window (10,100 fills ≥ $25k, 6,485 insider-buy buckets, 6,208 resolved):
+`copy_trading/deep_backtest.py` extends this to ~19 months of **resolved markets only** (per-market tape sweeps get past the global tape's ~50-day pagination cap) and simulates exit strategies on each alert's 12h price path.
 
-| group | n resolved | win rate | avg return / $1 (1¢ slippage) |
-|---|---|---|---|
-| alerts score ≥ 75 | 126 | 65.9% | **+5.2%** |
-| all alerts (score ≥ 60) | 197 | 61.9% | −1.3% |
-| control: all other big buys | 6,011 | 68.5% | −1.9% |
-
-The fresh-wallet filter finds genuine signal at the higher score bands (edge survives up to ~3¢ of slippage), but the median alert is a **sports syndicate** bankrolling a disposable wallet, not a political insider — and fresh six-figure wallets lose too (one dropped $517k on "France to advance" and got zeroed). Treat the score as a filter, not an oracle.
+**Read the red-team audit before believing any return numbers.** A four-agent adversarial review (statistics, mechanism, data integrity, economic realism — see the development log, entries 08–09) found the apparent copy-trading edge is **not statistically distinguishable from zero** once signals are clustered by market-outcome (182 "signals" ≈ 45 independent events), is mostly **favorite-longshot bias** (unalerted big buys at the same prices did as well or better), is concentrated in a handful of political outcomes, and shrinks further under realistic fills (the best trades gap past the copier's own slippage guard). The wallet-freshness score identifies *new accounts making big bets* — which in every measurable cut is neutral-to-dumb money — not insiders. The scanner remains useful as a **detector** (it flags CLARITY-style fresh-wallet clusters within seconds, days before press coverage); its value as an autopilot *trading strategy* is unproven, and the honest forward expectation of the current rule is ≈ 0 before frictions. Backtest tables now print `k-ev` (unique market-outcomes) next to `n` — treat `k-ev` as the sample size.
 
 **Know what you're buying.** Copy trading insiders is *not* free money, and this tool defaults to dry-run for a reason:
 

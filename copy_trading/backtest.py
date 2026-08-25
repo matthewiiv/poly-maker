@@ -449,6 +449,11 @@ def _stats(group: List[Candidate]) -> dict:
 
     return {
         "candidates": len(group),
+        # Unique market-outcomes: within one outcome every copy wins or loses
+        # together, so THIS is the effective sample size, not `candidates`.
+        # The red-team audit (log entry 08) found t-stats inflated ~1.7x when
+        # rows are treated as independent.
+        "events": len({(c.condition_id, c.outcome_index) for c in group}),
         "priced_buys": len(priced),
         "resolved": len(resolved),
         "win_rate": (len(wins) / len(resolved)) if resolved else None,
@@ -488,7 +493,7 @@ def summarize(candidates: List[Candidate], cfg: CopyConfig) -> Dict[str, dict]:
 
 def format_table(rows: Dict[str, dict]) -> str:
     header = (
-        f"{'group':38} {'n':>5} {'buys':>5} {'rslvd':>5} {'win%':>6} "
+        f"{'group':38} {'n':>5} {'k-ev':>5} {'buys':>5} {'rslvd':>5} {'win%':>6} "
         f"{'ret/$(r)':>9} {'open':>5} {'mtm/$':>7} {'ret/$all':>9}"
     )
     lines = [header, "-" * len(header)]
@@ -501,10 +506,11 @@ def format_table(rows: Dict[str, dict]) -> str:
             return f"{x:+.3f}" if x is not None else "-"
 
         lines.append(
-            f"{name:38} {s['candidates']:>5} {s['priced_buys']:>5} {s['resolved']:>5} "
-            f"{pct(s['win_rate']):>6} {num(s['avg_ret_resolved']):>9} {s['open']:>5} "
-            f"{num(s['avg_ret_open_mtm']):>7} {num(s['avg_ret_all']):>9}"
+            f"{name:38} {s['candidates']:>5} {s['events']:>5} {s['priced_buys']:>5} "
+            f"{s['resolved']:>5} {pct(s['win_rate']):>6} {num(s['avg_ret_resolved']):>9} "
+            f"{s['open']:>5} {num(s['avg_ret_open_mtm']):>7} {num(s['avg_ret_all']):>9}"
         )
+    lines.append("k-ev = unique market-outcomes; rows within one outcome are NOT independent")
     return "\n".join(lines)
 
 

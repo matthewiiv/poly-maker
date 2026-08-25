@@ -48,11 +48,11 @@ class CopyConfig:
     # year-scale backtest found $44M of them) — nothing copyable there.
     max_alert_price: float = 0.95
 
-    # Optionally ignore buys below this price too. In the year backtest the
-    # sub-65¢ region was toss-up gambling (elections, coin-flip geopolitics:
-    # every loser was a -100%), while >=65¢ entries won ~92-93% at both score
-    # tiers. Off by default because the 65¢ cut was chosen on that same
-    # sample; enable with --min-price 0.65 if you accept the tuning risk.
+    # Optionally ignore buys below this price too. NOTE (red-team audit, log
+    # entry 08-09): price cuts like this are favorite-longshot-bias filters
+    # that work for ANY large buyer — they are not evidence of insider
+    # identification, and the 65¢ value sat at the 58th percentile of a
+    # pure-noise selection null. Off by default.
     min_alert_price: float = 0.0
 
     # --- Copying -----------------------------------------------------------
