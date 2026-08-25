@@ -7,10 +7,13 @@ detections, model changes) in the Claude artifact **"The Insider Tape"** —
 https://claude.ai/code/artifact/aa05c872-0e52-401a-83ea-0da4daf33afb — which
 is an append-only development log:
 
-- Add a new numbered, dated entry per milestone (and a link in the masthead
-  index); republish to the same URL.
+- Add a new numbered, dated entry per milestone at the TOP of the log
+  (newest first), with a link first in the masthead index; republish to the
+  same URL.
 - Never rewrite or remove earlier entries beyond fixing typos — later
   findings supersede earlier ones in a new entry, not by editing history.
+- No whale terminology: the project's language is insider-centric
+  (watch_insiders.py, InsiderScanner, INSIDER ALERT).
 
 ## Project notes
 
