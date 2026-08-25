@@ -434,3 +434,61 @@ def test_scanner_insider_only_gating(tmp_path):
     )
     scanner2.poll_once(NOW)
     assert len(state2.alerted) == 1
+
+
+# -- deep backtest / exit simulation ----------------------------------------
+
+from copy_trading.backtest import Candidate as DeepCand  # noqa: E402
+from copy_trading.deep_backtest import month_windows, simulate_exit  # noqa: E402
+
+
+def make_deep_cand(price=0.75, ts=None):
+    return DeepCand(
+        wallet=WALLET,
+        name="w",
+        asset="1",
+        condition_id="0xc",
+        side="BUY",
+        outcome="No",
+        outcome_index=1,
+        title="t",
+        slug="s",
+        eval_ts=int(ts if ts is not None else NOW - 86400 * 10),
+        avg_price=price,
+        cash_at_eval=50_000,
+    )
+
+
+def test_simulate_exit_paths():
+    t0 = int(NOW - 86400 * 10)
+    c = make_deep_cand(0.75, t0)  # entry = 0.76 after 1c slippage
+    rising = [
+        {"t": t0 + i * 43200, "p": p}
+        for i, p in enumerate([0.75, 0.78, 0.82, 0.90, 0.96, 0.97], start=1)
+    ]
+    end_ts = t0 + 86400 * 30
+
+    r, d, how = simulate_exit(c, rising, 1.0, end_ts, {}, None)
+    assert how == "resolution" and r == pytest.approx(1 / 0.76 - 1)
+
+    r, _, how = simulate_exit(c, rising, 1.0, end_ts, {"tp_abs": 0.95}, None)
+    assert how == "take-profit" and r == pytest.approx(0.95 / 0.76 - 1)
+
+    falling = [{"t": t0 + 43200, "p": 0.70}, {"t": t0 + 86400, "p": 0.55}]
+    r, _, how = simulate_exit(c, falling, 0.0, end_ts, {"sl_minus": 0.15}, None)
+    # stop level 0.61; gap-through fills at bar price 0.55 minus 1c
+    assert how == "stop" and r == pytest.approx(0.54 / 0.76 - 1)
+
+    late = [{"t": t0 + 86400 * 8, "p": 0.80}]
+    r, _, how = simulate_exit(c, late, 1.0, end_ts, {"max_days": 7}, None)
+    assert how == "time" and r == pytest.approx(0.79 / 0.76 - 1)
+
+    r, _, how = simulate_exit(c, rising, 1.0, end_ts, {"insider_exit": True}, t0 + 86400)
+    assert how == "insider-sold"
+
+
+def test_month_windows_contiguous():
+    w = month_windows(3)
+    assert len(w) == 4  # current partial month + 3 full months
+    for (s1, e1), (s2, e2) in zip(w, w[1:]):
+        assert e1 == s2  # windows tile with no gaps
