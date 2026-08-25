@@ -470,3 +470,4 @@ cython_debug/
 
 # Copy trader runtime state
 copy_trading/state*.json
+copy_trading/backtest_cache/

@@ -308,3 +308,62 @@ def test_scanner_follows_watchlisted_wallet_small_trades(tmp_path):
     scanner.poll_once(NOW)
     assert len(state.alerted) == 1  # follow event fired
     assert state.total_spent > 0  # and was copied
+
+
+# -- backtest ---------------------------------------------------------------
+
+from copy_trading.backtest import Candidate, evaluate, profile_at, replay  # noqa: E402
+
+
+def test_profile_at_is_point_in_time():
+    activity = [
+        {"type": "TRADE", "timestamp": 1000, "usdcSize": 10, "conditionId": "a"},
+        {"type": "TRADE", "timestamp": 2000, "usdcSize": 20, "conditionId": "b"},
+    ]
+    p = profile_at("0xw", activity, 1500)
+    assert p.trade_count == 1 and p.first_seen_ts == 1000 and p.markets_traded == 1
+    # before the wallet existed: no history at all
+    p0 = profile_at("0xw", activity, 999)
+    assert p0.first_seen_ts is None and p0.age_days(999) is None
+
+
+def test_replay_evaluates_bucket_once_at_cash_crossing():
+    fills = [
+        make_trade(ts=NOW - 100, size=20_000, price=0.8, tx="0xa"),  # $16k: under min
+        make_trade(ts=NOW - 90, size=20_000, price=0.8, tx="0xb"),  # $32k: crosses
+    ]
+    activity = [
+        {"type": "TRADE", "timestamp": int(NOW - 100), "usdcSize": 16_000, "conditionId": "0xcond"},
+        {"type": "TRADE", "timestamp": int(NOW - 90), "usdcSize": 16_000, "conditionId": "0xcond"},
+    ]
+    cands = replay(fills, {WALLET: activity}, CopyConfig())
+    assert len(cands) == 1
+    c = cands[0]
+    assert c.cash_at_eval == pytest.approx(32_000)
+    assert c.final_cash == pytest.approx(32_000)
+    assert c.fills == 2
+    # brand-new wallet crossing with a $32k conviction buy scores as an alert
+    assert c.score >= CopyConfig().alert_score
+    assert c.wallet_age_days is not None and c.wallet_age_days < 0.01
+
+
+def test_evaluate_resolution_pnl():
+    c = Candidate(
+        wallet=WALLET,
+        name="w",
+        asset="1",
+        condition_id="0xc",
+        side="BUY",
+        outcome="No",
+        outcome_index=1,
+        title="t",
+        slug="s",
+        eval_ts=int(NOW),
+        avg_price=0.8,
+        cash_at_eval=50_000,
+    )
+    markets = {"0xc": {"resolved": True, "closed": True, "question": "t", "prices": [0.0, 1.0]}}
+    evaluate([c], markets, slippage_penalty=0.01)
+    assert c.won is True
+    assert c.entry_price == pytest.approx(0.81)
+    assert c.ret_per_dollar == pytest.approx(1 / 0.81 - 1)
