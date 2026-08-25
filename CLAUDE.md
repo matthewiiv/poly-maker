@@ -15,6 +15,18 @@ is an append-only development log:
 - No whale terminology: the project's language is insider-centric
   (watch_insiders.py, InsiderScanner, INSIDER ALERT).
 
+## Adversarial review
+
+Before presenting any new "finding" (a profitable cut, filter, or strategy
+tweak) as real, spin up parallel adversarial agents to attack it — at
+minimum: a statistics skeptic (overfitting, multiple comparisons,
+effective sample size after clustering), a mechanism skeptic (does the
+feature measure what we claim, or is it a proxy/patch — e.g. test wallet
+features price-stratified), a data-integrity auditor (lookahead,
+survivorship, selection), and an economic-realism critic (null models
+like favorite-longshot bias, capacity, adverse selection). Report which
+claims survived, weakened, or died — killed findings go in the log too.
+
 ## Project notes
 
 - `copy_trading/` is the insider watcher / copy trader; `watch_insiders.py`
