@@ -66,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MAX_FILL_AGE_SECS,
         help="ignore tape fills older than this many seconds",
     )
+    det.add_argument(
+        "--all-markets",
+        action="store_true",
+        help="alert on every market (default: only insider-plausible ones — "
+        "sports, esports and price-level markets are filtered out)",
+    )
 
     cp = p.add_argument_group("copying")
     cp.add_argument("--copy", action="store_true", help="plan copy orders (dry-run unless --live)")
@@ -148,6 +154,7 @@ def main(argv=None) -> int:
         min_trade_cash=args.min_cash,
         alert_score=args.alert_score,
         fresh_wallet_days=args.fresh_days,
+        insider_only=not args.all_markets,
         copy_ratio=args.ratio,
         max_per_trade_usdc=args.max_per_trade,
         max_per_market_usdc=args.max_per_market,

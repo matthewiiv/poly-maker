@@ -16,9 +16,22 @@ from copy_trading.executor import (
     round_to_tick,
     size_copy_cash,
 )
+from copy_trading.market_class import MarketClass, classify_event
 from copy_trading.scanner import WhaleScanner
 from copy_trading.signals import WalletProfile, profile_wallet, score_whale
 from copy_trading.state import StateStore
+
+
+class StubClassifier:
+    def __init__(self, mc):
+        self.mc = mc
+
+    def classify(self, slug, title=""):
+        return self.mc
+
+
+INSIDER_CLASS = MarketClass("insider", True, ["tag:test"])
+SPORTS_CLASS = MarketClass("sports", False, ["tag:sports"])
 
 # Recent epoch: StateStore prunes seen/alerted entries against wall-clock
 # time, so fabricated timestamps must be near the present.
@@ -247,7 +260,9 @@ def test_executor_sell_only_closes_held_copies(tmp_path):
 # -- scanner ----------------------------------------------------------------
 
 
-def make_scanner(tmp_path, trades, profile, cfg=None, with_executor=True, wallet_trades=None):
+def make_scanner(
+    tmp_path, trades, profile, cfg=None, with_executor=True, wallet_trades=None, mclass=None
+):
     cfg = cfg or CopyConfig()
     state = StateStore(str(tmp_path / "state.json"))
     executor = (
@@ -262,6 +277,7 @@ def make_scanner(tmp_path, trades, profile, cfg=None, with_executor=True, wallet
         profile_fn=lambda wallet: profile,
         trades_fn=lambda min_cash, limit=100: trades,
         wallet_trades_fn=lambda wallet, limit=25: wallet_trades or [],
+        classifier=StubClassifier(mclass or INSIDER_CLASS),
     )
     return state, scanner
 
@@ -367,3 +383,54 @@ def test_evaluate_resolution_pnl():
     assert c.won is True
     assert c.entry_price == pytest.approx(0.81)
     assert c.ret_per_dollar == pytest.approx(1 / 0.81 - 1)
+
+
+# -- market classifier ------------------------------------------------------
+
+
+def test_classify_event_structural_sports_and_deny_tags():
+    ev = {"tags": [{"slug": "crypto"}], "markets": [{"sportsMarketType": "moneyline"}]}
+    assert classify_event(ev, "Arsenal vs City").insider_plausible is False
+
+    ev2 = {"tags": [{"slug": "sports"}, {"slug": "epl"}], "markets": []}
+    mc = classify_event(ev2, "Will Chelsea FC win on 2026-08-24?")
+    assert mc.category == "sports" and not mc.insider_plausible
+
+
+def test_classify_event_price_markets_and_recurring():
+    ev = {"tags": [{"slug": "crypto-prices"}, {"slug": "bitcoin"}]}
+    assert classify_event(ev, "Will Bitcoin dip to $45,000?").category == "price-market"
+
+    ev2 = {"tags": [{"slug": "weather"}], "series": [{"recurrence": "daily"}]}
+    assert classify_event(ev2, "Highest temperature in NYC today?").insider_plausible is False
+
+
+def test_classify_event_insider_paths():
+    # Tag-based: the CLARITY Act pattern
+    ev = {"tags": [{"slug": "politics"}, {"slug": "us-law"}, {"slug": "crypto"}]}
+    mc = classify_event(ev, "Clarity Act (H.R.3633) signed into law in 2026?")
+    assert mc.category == "insider" and mc.insider_plausible
+
+    # Verb-based fallback: exchange listing with only a generic tag
+    mc2 = classify_event({"tags": [{"slug": "crypto"}]}, "Will Coinbase list PUMP in August?")
+    assert mc2.insider_plausible and any(r.startswith("verb:") for r in mc2.reasons)
+
+    # No signal at all
+    mc3 = classify_event({"tags": [{"slug": "weather"}]}, "Will it rain in NYC tomorrow?")
+    assert mc3.category == "unclear" and not mc3.insider_plausible
+
+
+def test_scanner_insider_only_gating(tmp_path):
+    trades = [make_trade(ts=NOW - 10, tx="0xsport")]
+    # Default config is insider-only: a sports whale produces no alert.
+    state, scanner = make_scanner(tmp_path, trades, fresh_profile(), mclass=SPORTS_CLASS)
+    scanner.poll_once(NOW)
+    assert not state.alerted and not state.is_watched(WALLET)
+
+    # Same fill with --all-markets (insider_only=False) alerts as before.
+    cfg = CopyConfig(insider_only=False)
+    state2, scanner2 = make_scanner(
+        tmp_path / "all", trades, fresh_profile(), cfg=cfg, mclass=SPORTS_CLASS
+    )
+    scanner2.poll_once(NOW)
+    assert len(state2.alerted) == 1

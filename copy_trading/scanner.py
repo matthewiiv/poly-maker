@@ -22,6 +22,7 @@ import requests
 from copy_trading.config import CopyConfig
 from copy_trading.data_api import get_large_trades, get_wallet_trades, trade_cash
 from copy_trading.executor import CopyExecutor
+from copy_trading.market_class import MarketClassifier
 from copy_trading.signals import WalletProfile, WhaleSignal, profile_wallet, score_whale
 from copy_trading.state import StateStore
 
@@ -51,6 +52,7 @@ class WhaleScanner:
         profile_fn: Callable[[str], WalletProfile] = profile_wallet,
         trades_fn: Callable[..., List[dict]] = get_large_trades,
         wallet_trades_fn: Callable[..., List[dict]] = get_wallet_trades,
+        classifier: Optional[MarketClassifier] = None,
     ):
         self.cfg = cfg
         self.state = state
@@ -59,6 +61,7 @@ class WhaleScanner:
         self.profile_fn = profile_fn
         self.trades_fn = trades_fn
         self.wallet_trades_fn = wallet_trades_fn
+        self.classifier = classifier or MarketClassifier()
 
         self.buckets: Dict[str, WhaleSignal] = {}
         self._profile_cache: Dict[str, Tuple[WalletProfile, float]] = {}
@@ -176,6 +179,12 @@ class WhaleScanner:
         if bucket.total_cash < self.cfg.min_trade_cash:
             return
 
+        # Classify before spending an API call on profiling: in insider-only
+        # mode most tape volume (sports, price series) is filtered out here.
+        mclass = self.classifier.classify(bucket.event_slug, bucket.title)
+        if self.cfg.insider_only and not mclass.insider_plausible:
+            return
+
         profile = self._profile(bucket.wallet)
         if profile is None:
             return  # profiling failed; a later fill in this bucket retries
@@ -185,6 +194,10 @@ class WhaleScanner:
         )
         if score < self.cfg.alert_score:
             return
+        if mclass.insider_plausible:
+            reasons.append(f"insider-market({','.join(mclass.reasons[:2])})")
+        else:
+            reasons.append(f"market:{mclass.category}")
 
         self.state.alerted[alert_key] = now
         self.state.add_to_watchlist(

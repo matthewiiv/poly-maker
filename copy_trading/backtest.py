@@ -37,6 +37,7 @@ from typing import Dict, List, Optional, Tuple
 
 from copy_trading.config import CopyConfig
 from copy_trading.data_api import ACTIVITY_PAGE_LIMIT, DATA_API, _get
+from copy_trading.market_class import classify_event
 from copy_trading.signals import WalletProfile, WhaleSignal, score_whale
 
 GAMMA_API = "https://gamma-api.polymarket.com"
@@ -240,6 +241,7 @@ class Candidate:
     eval_ts: int
     avg_price: float  # bucket avg at evaluation time (what a copier would chase)
     cash_at_eval: float
+    event_slug: str = ""
     final_cash: float = 0.0  # bucket total after all fills
     fills: int = 0
     score: int = 0
@@ -254,6 +256,9 @@ class Candidate:
     entry_price: Optional[float] = None
     ret_per_dollar: Optional[float] = None
     category: str = "other"
+    # From the tag-based market classifier (classify_candidates)
+    market_category: str = "unclear"
+    insider_plausible: bool = False
 
 
 CRYPTO_WORDS = ("bitcoin", "btc", "ethereum", "eth ", "solana", "xrp", "crypto", "doge")
@@ -361,6 +366,7 @@ def replay(
             eval_ts=ts,
             avg_price=bucket.avg_price,
             cash_at_eval=bucket.total_cash,
+            event_slug=bucket.event_slug,
             final_cash=bucket.total_cash,
             fills=bucket.fill_count,
             score=score,
@@ -372,6 +378,34 @@ def replay(
         )
 
     return list(evaluated.values())
+
+
+def classify_candidates(candidates: List[Candidate], cache_dir: str, workers: int = 6) -> None:
+    """Tag every candidate with the insider-plausibility classifier."""
+    by_slug: Dict[str, List[Candidate]] = defaultdict(list)
+    for c in candidates:
+        by_slug[c.event_slug].append(c)
+
+    def fetch(slug: str):
+        if not slug:
+            return None
+        try:
+            return _cached(
+                cache_dir,
+                f"events/{slug}.json",
+                lambda: (_get(f"{GAMMA_API}/events", {"slug": slug}) or [None])[0],
+            )
+        except Exception:
+            return None
+
+    slugs = sorted(by_slug)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for slug, event in zip(slugs, pool.map(fetch, slugs)):
+            group = by_slug[slug]
+            mc = classify_event(event, group[0].title)
+            for c in group:
+                c.market_category = mc.category
+                c.insider_plausible = mc.insider_plausible
 
 
 def evaluate(
@@ -445,6 +479,10 @@ def summarize(candidates: List[Candidate], cfg: CopyConfig) -> Dict[str, dict]:
     }
     for cat in ("politics", "crypto", "sports", "other"):
         rows[f"  alerts:{cat}"] = _stats([c for c in alerts if c.category == cat])
+    insider = [c for c in alerts if c.insider_plausible]
+    rows["INSIDER-ONLY alerts (classifier)"] = _stats(insider)
+    rows["  insider-only, score>=75"] = _stats([c for c in insider if c.score >= 75])
+    rows["  excluded by classifier"] = _stats([c for c in alerts if not c.insider_plausible])
     return rows
 
 
@@ -488,6 +526,7 @@ def case_study(condition_id: str, min_cash: float, cfg: CopyConfig, cache_dir: s
     )
 
     candidates = replay(fills, activities, cfg)
+    classify_candidates(candidates, cache_dir)
     evaluate(candidates, markets, slippage_penalty=0.01)
     for c in sorted(candidates, key=lambda c: c.eval_ts):
         age = f"{c.wallet_age_days:.2f}d" if c.wallet_age_days is not None else "?"
@@ -498,7 +537,7 @@ def case_study(condition_id: str, min_cash: float, cfg: CopyConfig, cache_dir: s
             f"[{when} UTC] {verdict:8} score={c.score:<3} {c.name or c.wallet[:10]:16} "
             f"{c.side} {c.outcome:3} @ {c.avg_price:.3f} | ${c.final_cash:,.0f} "
             f"({c.fills} fills) | wallet {age} old, {c.wallet_trades_before} prior trades "
-            f"| copy mtm {mtm} | {', '.join(c.reasons)}"
+            f"| market:{c.market_category} | copy mtm {mtm} | {', '.join(c.reasons)}"
         )
 
 
@@ -562,9 +601,10 @@ def main(argv=None) -> int:
     conditions = sorted({c.condition_id for c in candidates if c.condition_id})
     print(
         f"[backtest] {len(candidates)} candidate buckets across {len(conditions)} markets; "
-        f"fetching resolutions..."
+        f"fetching resolutions and classifying markets..."
     )
     markets = fetch_markets(conditions, args.cache_dir)
+    classify_candidates(candidates, args.cache_dir)
     evaluate(candidates, markets, args.slippage_penalty)
 
     print(

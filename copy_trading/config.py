@@ -36,6 +36,13 @@ class CopyConfig:
     # token and side within this window are aggregated into one signal.
     aggregation_window_secs: float = 180.0
 
+    # Only alert on insider-plausible markets (legislation, listings,
+    # appointments, rulings — outcomes a small group knows before the
+    # public). Sports/esports, price-level bets and rapid recurring series
+    # are excluded: fresh whales there are betting syndicates, not insiders.
+    # Disable via --all-markets to watch everything.
+    insider_only: bool = True
+
     # --- Copying -----------------------------------------------------------
     # Fraction of the whale's cash size that we mirror (0.001 = $100 copy of a
     # $100k bet), further limited by the caps below.

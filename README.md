@@ -35,6 +35,8 @@ Ever read a headline like *"new Polymarket wallet just bet $800k on the CLARITY 
 3. **Scoring** — transparent 0–100 score (freshness, bet size, concentration, conviction pricing). Above the threshold: alert (console + optional Slack/Discord webhook), auto-watchlist, and optionally a copy.
 4. **Copying** — mirrors the whale with a tiny proportional size (default 0.1% of their bet, capped per trade/market/total), as a marketable limit order that refuses to chase if the price already moved more than a few cents past the whale's fill. Watchlisted wallets' follow-up buys and exits are mirrored too.
 
+**Insider-only by default.** Most fresh-wallet whales are sports syndicates, not insiders, so the scanner only alerts on *insider-plausible* markets — outcomes a small group of humans knows before the public (legislation, listings, appointments, rulings, M&A). Classification uses Polymarket's own event tags plus structural signals (`sportsMarketType`/`gameStartTime`, price-series tags, rapid recurring series) with an announcement-verb fallback on the question text — see `copy_trading/market_class.py`. Pass `--all-markets` to watch everything, sports included.
+
 ```bash
 # Alert-only (no orders, no credentials needed)
 uv run python watch_whales.py
