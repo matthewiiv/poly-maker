@@ -35,6 +35,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from typing import Dict, List, Optional, Tuple
 
+import requests
+
 from copy_trading.backtest import (
     Candidate,
     _cached,
@@ -86,34 +88,66 @@ def month_windows(months: int, now: Optional[float] = None) -> List[Tuple[str, s
     return [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
 
 
+class _OffsetCap(Exception):
+    """Gamma rejects /markets offsets past ~2000; split the window instead."""
+
+
+def _iso_ts(iso: str) -> int:
+    return int(time.mktime(time.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S")))
+
+
+def _ts_iso(ts: int) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+
+def _window_rows(start: str, end: str, min_volume: float) -> List[dict]:
+    rows, offset = [], 0
+    while True:
+        if offset >= 1_900:  # preempt gamma's ~2000 offset cap
+            raise _OffsetCap()
+        try:
+            page = _gget(
+                f"{GAMMA_API}/markets",
+                {
+                    "closed": "true",
+                    "volume_num_min": int(min_volume),
+                    "end_date_min": start,
+                    "end_date_max": end,
+                    "limit": 100,
+                    "offset": offset,
+                },
+            )
+        except requests.HTTPError as ex:
+            if ex.response is not None and ex.response.status_code == 422 and offset >= 1_000:
+                raise _OffsetCap()
+            raise
+        rows.extend(page or [])
+        if not page or len(page) < 100:
+            return rows
+        offset += 100
+
+
+def fetch_window(start: str, end: str, min_volume: float, cache_dir: str) -> List[dict]:
+    """One end-date window, bisected recursively until it fits under the cap."""
+    key = f"deep/markets/{start[:10]}_{end[:10]}_{int(min_volume)}.json"
+    try:
+        return _cached(cache_dir, key, lambda: _window_rows(start, end, min_volume))
+    except _OffsetCap:
+        t0, t1 = _iso_ts(start), _iso_ts(end)
+        if t1 - t0 <= 86_400:
+            print(f"[deep] WARNING: 1-day window {start[:10]} still over the cap; truncated")
+            return []
+        mid = _ts_iso(t0 + (t1 - t0) // 2)
+        return fetch_window(start, mid, min_volume, cache_dir) + fetch_window(
+            mid, end, min_volume, cache_dir
+        )
+
+
 def enumerate_markets(months: int, min_volume: float, cache_dir: str) -> List[dict]:
     """All closed markets with volume >= min_volume ending in the window."""
     out: Dict[str, dict] = {}
     for start, end in month_windows(months):
-
-        def sweep(start=start, end=end):
-            rows, offset = [], 0
-            while True:
-                page = _gget(
-                    f"{GAMMA_API}/markets",
-                    {
-                        "closed": "true",
-                        "volume_num_min": min_volume,
-                        "end_date_min": start,
-                        "end_date_max": end,
-                        "limit": 100,
-                        "offset": offset,
-                    },
-                )
-                rows.extend(page or [])
-                if not page or len(page) < 100 or offset >= 9_900:
-                    if page and len(page) == 100:
-                        print(f"[deep] WARNING: window {start} hit the offset cap")
-                    return rows
-                offset += 100
-
-        key = f"deep/markets/{start[:7]}_{int(min_volume)}.json"
-        for m in _cached(cache_dir, key, sweep):
+        for m in fetch_window(start, end, min_volume, cache_dir):
             if m.get("conditionId"):
                 out[m["conditionId"]] = m
         print(f"[deep] {start[:7]}: cumulative {len(out)} markets")
