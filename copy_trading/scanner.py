@@ -176,8 +176,9 @@ class InsiderScanner:
         if bucket.side != "BUY":
             return
 
-        # Near-$1 buys are cash-parking on a near-certainty, not a bet.
-        if bucket.avg_price > self.cfg.max_alert_price:
+        # Near-$1 buys are cash-parking on a near-certainty, not a bet;
+        # optionally skip low-price toss-up entries too (see config).
+        if not (self.cfg.min_alert_price <= bucket.avg_price <= self.cfg.max_alert_price):
             return
 
         if bucket.total_cash < self.cfg.min_trade_cash:

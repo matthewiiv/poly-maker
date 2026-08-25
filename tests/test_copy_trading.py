@@ -500,3 +500,16 @@ def test_scanner_skips_near_dollar_parking(tmp_path):
     state, scanner = make_scanner(tmp_path, trades, fresh_profile())
     scanner.poll_once(NOW)
     assert not state.alerted
+
+
+def test_scanner_optional_min_price_floor(tmp_path):
+    # 55c toss-up entry skipped when a floor is set, alerted when it isn't.
+    trades = [make_trade(ts=NOW - 10, price=0.55, size=100_000, tx="0xtoss")]
+    cfg = CopyConfig(min_alert_price=0.65)
+    state, scanner = make_scanner(tmp_path, trades, fresh_profile(), cfg=cfg)
+    scanner.poll_once(NOW)
+    assert not state.alerted
+
+    state2, scanner2 = make_scanner(tmp_path / "off", trades, fresh_profile())
+    scanner2.poll_once(NOW)
+    assert len(state2.alerted) == 1

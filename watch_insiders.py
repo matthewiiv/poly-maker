@@ -78,6 +78,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=d.max_alert_price,
         help="ignore buys above this price (near-$1 buys are cash parking, not bets)",
     )
+    det.add_argument(
+        "--min-price",
+        type=float,
+        default=d.min_alert_price,
+        help="ignore buys below this price (sub-65c entries backtested as toss-up "
+        "gambling; try 0.65)",
+    )
 
     cp = p.add_argument_group("copying")
     cp.add_argument("--copy", action="store_true", help="plan copy orders (dry-run unless --live)")
@@ -162,6 +169,7 @@ def main(argv=None) -> int:
         fresh_wallet_days=args.fresh_days,
         insider_only=not args.all_markets,
         max_alert_price=args.max_price,
+        min_alert_price=args.min_price,
         copy_ratio=args.ratio,
         max_per_trade_usdc=args.max_per_trade,
         max_per_market_usdc=args.max_per_market,
