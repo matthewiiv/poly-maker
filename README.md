@@ -54,6 +54,25 @@ uv run python watch_whales.py --once --lookback 86400 --copy
 
 Run `uv run python watch_whales.py --help` for all knobs (thresholds, copy ratio, caps, slippage, poll rate, webhook).
 
+### Backtesting
+
+`copy_trading/backtest.py` replays the reachable trade tape (~50 days at a $25k filter) through the exact scanner logic — wallet profiles are reconstructed *as of each fill's timestamp* (no lookahead) — and grades hypothetical copies against market resolutions:
+
+```bash
+uv run python -m copy_trading.backtest --sweep            # full sweep + sensitivity matrix
+uv run python -m copy_trading.backtest --case-study <conditionId>   # replay one market's whales
+```
+
+Findings from the Jul 7 – Aug 25 2026 window (10,100 fills ≥ $25k, 6,485 whale-buy buckets, 6,208 resolved):
+
+| group | n resolved | win rate | avg return / $1 (1¢ slippage) |
+|---|---|---|---|
+| alerts score ≥ 75 | 126 | 65.9% | **+5.2%** |
+| all alerts (score ≥ 60) | 197 | 61.9% | −1.3% |
+| control: all other big buys | 6,011 | 68.5% | −1.9% |
+
+The fresh-wallet filter finds genuine signal at the higher score bands (edge survives up to ~3¢ of slippage), but the median alert is a **sports syndicate** bankrolling a disposable wallet, not a political insider — and fresh whales lose too (one dropped $517k on "France to advance" and got zeroed). Treat the score as a filter, not an oracle.
+
 **Know what you're buying.** Copy trading whales is *not* free money, and this tool defaults to dry-run for a reason:
 
 - **You're late by design.** By the time a whale's prints hit the tape the book has often already repriced — the slippage guard will skip many of the juiciest signals (correctly).
