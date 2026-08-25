@@ -161,14 +161,18 @@ def fetch_markets(condition_ids: List[str], cache_dir: str) -> Dict[str, dict]:
     """conditionId -> {resolved, prices per outcomeIndex, question, closed}."""
 
     def fetch_batch(batch):
+        # Gamma excludes closed markets from condition_ids lookups unless
+        # closed=true is passed, so resolved markets need a second query.
         qs = "&".join(f"condition_ids={c}" for c in batch)
-        return _get(f"{GAMMA_API}/markets?{qs}")
+        rows = list(_get(f"{GAMMA_API}/markets?{qs}&limit=100") or [])
+        rows += _get(f"{GAMMA_API}/markets?{qs}&closed=true&limit=100") or []
+        return rows
 
     out: Dict[str, dict] = {}
     todo = sorted(set(condition_ids))
     for i in range(0, len(todo), 20):
         batch = todo[i : i + 20]
-        key = f"markets/{batch[0][:14]}_{len(batch)}.json"
+        key = f"markets_v2/{batch[0][:14]}_{len(batch)}.json"
         try:
             rows = _cached(cache_dir, key, lambda b=batch: fetch_batch(b))
         except Exception as ex:
@@ -329,6 +333,10 @@ def replay(
         if bucket_id in evaluated:
             evaluated[bucket_id].final_cash = bucket.total_cash
             evaluated[bucket_id].fills = bucket.fill_count
+            continue
+        # A whale *bet* is a BUY; large sells are mostly winners cashing out
+        # (often at ~$1.00) and carry no copyable information.
+        if bucket.side != "BUY":
             continue
         if bucket.total_cash < cfg.min_trade_cash:
             continue

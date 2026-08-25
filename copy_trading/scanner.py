@@ -168,6 +168,11 @@ class WhaleScanner:
             self._copy(bucket)
             return
 
+        # A whale *bet* is a BUY. Large sells from unknown wallets are mostly
+        # winners cashing out (often at ~$1.00) — nothing to copy or watch.
+        if bucket.side != "BUY":
+            return
+
         if bucket.total_cash < self.cfg.min_trade_cash:
             return
 
