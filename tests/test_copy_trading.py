@@ -492,3 +492,11 @@ def test_month_windows_contiguous():
     assert len(w) == 4  # current partial month + 3 full months
     for (s1, e1), (s2, e2) in zip(w, w[1:]):
         assert e1 == s2  # windows tile with no gaps
+
+
+def test_scanner_skips_near_dollar_parking(tmp_path):
+    # $95k buy at 0.98: a cash-parker, not a bet — no alert even when fresh.
+    trades = [make_trade(ts=NOW - 10, price=0.98, size=97_000, tx="0xpark")]
+    state, scanner = make_scanner(tmp_path, trades, fresh_profile())
+    scanner.poll_once(NOW)
+    assert not state.alerted

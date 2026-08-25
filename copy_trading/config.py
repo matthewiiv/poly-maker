@@ -43,6 +43,11 @@ class CopyConfig:
     # Disable via --all-markets to watch everything.
     insider_only: bool = True
 
+    # Ignore buys above this price: fresh wallets buying at 95-99.9¢ are
+    # parking cash on a near-certainty for a fraction of a percent (the
+    # year-scale backtest found $44M of them) — nothing copyable there.
+    max_alert_price: float = 0.95
+
     # --- Copying -----------------------------------------------------------
     # Fraction of the insider's cash size that we mirror (0.001 = $100 copy of a
     # $100k bet), further limited by the caps below.

@@ -72,6 +72,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="alert on every market (default: only insider-plausible ones — "
         "sports, esports and price-level markets are filtered out)",
     )
+    det.add_argument(
+        "--max-price",
+        type=float,
+        default=d.max_alert_price,
+        help="ignore buys above this price (near-$1 buys are cash parking, not bets)",
+    )
 
     cp = p.add_argument_group("copying")
     cp.add_argument("--copy", action="store_true", help="plan copy orders (dry-run unless --live)")
@@ -155,6 +161,7 @@ def main(argv=None) -> int:
         alert_score=args.alert_score,
         fresh_wallet_days=args.fresh_days,
         insider_only=not args.all_markets,
+        max_alert_price=args.max_price,
         copy_ratio=args.ratio,
         max_per_trade_usdc=args.max_per_trade,
         max_per_market_usdc=args.max_per_market,
