@@ -37,6 +37,8 @@ Ever read a headline like *"new Polymarket wallet just bet $800k on the CLARITY 
 
 **Insider-only by default.** Most fresh-wallet insiders are sports syndicates, not insiders, so the scanner only alerts on *insider-plausible* markets — outcomes a small group of humans knows before the public (legislation, listings, appointments, rulings, M&A). Classification uses Polymarket's own event tags plus structural signals (`sportsMarketType`/`gameStartTime`, price-series tags, rapid recurring series) with an announcement-verb fallback on the question text — see `copy_trading/market_class.py`. Pass `--all-markets` to watch everything, sports included.
 
+**On-chain coordination detection.** The scanner also traces young wallets' funding on Polygon (`copy_trading/wallet_intel.py`, via Blockscout, no key needed) and keeps a *coordination book*: when two or more freshly-funded wallets **sharing one funding wallet** buy the same market-outcome within days, that fires a `COORDINATED CLUSTER` alert and watchlists every sibling. This is the structure behind the October 2025 Nobel Peace Prize front-running episode — one 9-day burner wallet funded ten fresh wallets that bought the winning outcome hours before the announcement, each staying *under* the $25k alert floor — which is why the scanner reads the tape down to a lower intel floor (`--intel-min-cash`, default $2.5k) for funding traces even though solo alerts still require `--min-cash`. Funder lookups whitelist token *contract addresses* (scammers poison transfer histories with lookalike "USDC" symbols) and never treat Polymarket's own contracts as parents. Disable with `--no-trace-funding`.
+
 ```bash
 # Alert-only (no orders, no credentials needed)
 uv run python watch_insiders.py
