@@ -24,6 +24,59 @@ The repository consists of several interconnected modules:
 - `poly_stats`: Account statistics tracking
 - `poly_utils`: Shared utility functions
 - `data_updater`: Separate module for collecting market information
+- `copy_trading`: Standalone insider watcher / copy trader (see below)
+
+## Insider Watching & Copy Trading
+
+Ever read a headline like *"new Polymarket wallet just bet $800k on the CLARITY Act"* and wondered whether you could spot those wallets live — and ride along? `watch_insiders.py` does exactly that, using only Polymarket's public APIs:
+
+1. **Tape scan** — polls `data-api.polymarket.com/trades` with a cash filter, so every fill on the platform worth ≥ $25k (configurable) is examined seconds after it prints.
+2. **Wallet forensics** — pulls the wallet's full `/activity` history: how old is it, how many lifetime trades, how concentrated? A wallet whose *first-ever action* is a six-figure conviction buy is the classic "insider-looking" pattern.
+3. **Scoring** — transparent 0–100 score (freshness, bet size, concentration, conviction pricing). Above the threshold: alert (console + optional Slack/Discord webhook), auto-watchlist, and optionally a copy.
+4. **Copying** — mirrors the insider with a tiny proportional size (default 0.1% of their bet, capped per trade/market/total), as a marketable limit order that refuses to chase if the price already moved more than a few cents past the insider's fill. Watchlisted wallets' follow-up buys and exits are mirrored too.
+
+**Insider-only by default.** Most fresh-wallet insiders are sports syndicates, not insiders, so the scanner only alerts on *insider-plausible* markets — outcomes a small group of humans knows before the public (legislation, listings, appointments, rulings, M&A). Classification uses Polymarket's own event tags plus structural signals (`sportsMarketType`/`gameStartTime`, price-series tags, rapid recurring series) with an announcement-verb fallback on the question text — see `copy_trading/market_class.py`. Pass `--all-markets` to watch everything, sports included.
+
+**On-chain coordination detection.** The scanner also traces young wallets' funding on Polygon (`copy_trading/wallet_intel.py`, via Blockscout, no key needed) and keeps a *coordination book*: when two or more freshly-funded wallets **sharing one funding wallet** buy the same market-outcome within days, that fires a `COORDINATED CLUSTER` alert and watchlists every sibling. This is the structure behind the October 2025 Nobel Peace Prize front-running episode — one 9-day burner wallet funded ten fresh wallets that bought the winning outcome hours before the announcement, each staying *under* the $25k alert floor — which is why the scanner reads the tape down to a lower intel floor (`--intel-min-cash`, default $2.5k) for funding traces even though solo alerts still require `--min-cash`. Funder lookups whitelist token *contract addresses* (scammers poison transfer histories with lookalike "USDC" symbols) and never treat Polymarket's own contracts as parents. Disable with `--no-trace-funding`.
+
+```bash
+# Alert-only (no orders, no credentials needed)
+uv run python watch_insiders.py
+
+# Dry-run copying: prints the exact orders it WOULD place
+uv run python watch_insiders.py --copy
+
+# Follow specific wallets you already know about
+uv run python watch_insiders.py --copy --wallets 0xabc...,0xdef...
+
+# Live copying (real money!) — needs PK/BROWSER_ADDRESS plus an explicit opt-in
+COPY_TRADER_LIVE=YES uv run python watch_insiders.py --copy --live
+
+# One diagnostic pass over the last 24h of big prints
+uv run python watch_insiders.py --once --lookback 86400 --copy
+```
+
+Run `uv run python watch_insiders.py --help` for all knobs (thresholds, copy ratio, caps, slippage, poll rate, webhook).
+
+### Backtesting
+
+`copy_trading/backtest.py` replays the reachable trade tape (~50 days at a $25k filter) through the exact scanner logic — wallet profiles are reconstructed *as of each fill's timestamp* (no lookahead) — and grades hypothetical copies against market resolutions:
+
+```bash
+uv run python -m copy_trading.backtest --sweep            # full sweep + sensitivity matrix
+uv run python -m copy_trading.backtest --case-study <conditionId>   # replay one market's insiders
+```
+
+`copy_trading/deep_backtest.py` extends this to ~19 months of **resolved markets only** (per-market tape sweeps get past the global tape's ~50-day pagination cap) and simulates exit strategies on each alert's 12h price path.
+
+**Read the red-team audit before believing any return numbers.** A four-agent adversarial review (statistics, mechanism, data integrity, economic realism — see the development log, entries 08–09) found the apparent copy-trading edge is **not statistically distinguishable from zero** once signals are clustered by market-outcome (182 "signals" ≈ 45 independent events), is mostly **favorite-longshot bias** (unalerted big buys at the same prices did as well or better), is concentrated in a handful of political outcomes, and shrinks further under realistic fills (the best trades gap past the copier's own slippage guard). The wallet-freshness score identifies *new accounts making big bets* — which in every measurable cut is neutral-to-dumb money — not insiders. The scanner remains useful as a **detector** (it flags CLARITY-style fresh-wallet clusters within seconds, days before press coverage); its value as an autopilot *trading strategy* is unproven, and the honest forward expectation of the current rule is ≈ 0 before frictions. Backtest tables now print `k-ev` (unique market-outcomes) next to `n` — treat `k-ev` as the sample size.
+
+**Know what you're buying.** Copy trading insiders is *not* free money, and this tool defaults to dry-run for a reason:
+
+- **You're late by design.** By the time an insider's prints hit the tape the book has often already repriced — the slippage guard will skip many of the juiciest signals (correctly).
+- **"Insider-looking" ≠ informed.** Fresh wallets bet big on *both* sides of the same market (the CLARITY Act market had fresh six-figure wallets on YES *and* NO simultaneously). Some are hedging exposure elsewhere, some are laundering attention, some are just rich and wrong.
+- **Adverse selection cuts both ways.** If the insider really is informed, the people selling to you are the ones who know less — but if they're not, you've bought a moved price on noise.
+- **Sells only close copies.** The tool never shorts; a watched wallet's SELL just exits whatever you copied earlier.
 
 ## Requirements
 
