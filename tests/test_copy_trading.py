@@ -261,7 +261,14 @@ def test_executor_sell_only_closes_held_copies(tmp_path):
 
 
 def make_scanner(
-    tmp_path, trades, profile, cfg=None, with_executor=True, wallet_trades=None, mclass=None
+    tmp_path,
+    trades,
+    profile,
+    cfg=None,
+    with_executor=True,
+    wallet_trades=None,
+    mclass=None,
+    tracer=None,
 ):
     cfg = cfg or CopyConfig()
     state = StateStore(str(tmp_path / "state.json"))
@@ -278,6 +285,7 @@ def make_scanner(
         trades_fn=lambda min_cash, limit=100: trades,
         wallet_trades_fn=lambda wallet, limit=25: wallet_trades or [],
         classifier=StubClassifier(mclass or INSIDER_CLASS),
+        tracer=tracer,  # tests are network-free: no real FundingTracer
     )
     return state, scanner
 
@@ -513,3 +521,166 @@ def test_scanner_optional_min_price_floor(tmp_path):
     state2, scanner2 = make_scanner(tmp_path / "off", trades, fresh_profile())
     scanner2.poll_once(NOW)
     assert len(state2.alerted) == 1
+
+
+# -- wallet intel (funding traces & coordination) ---------------------------
+
+from copy_trading.wallet_intel import (  # noqa: E402
+    TOKEN_CONTRACTS,
+    CoordinationBook,
+    Funding,
+    FundingTracer,
+    deposit_fingerprint,
+)
+
+USDC_CONTRACT = "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359"
+SCAM_CONTRACT = "0x32898be3deab4d9d25331b980e77cd5e35cbb265"  # fake "UЅDС"
+PARENT = "0xe206961002feebd9edb152eed9b630a351874043"
+
+
+class StubBlockscout:
+    """Session stub: token transfers + v2 address lookups, no network."""
+
+    def __init__(self, transfers, contracts=()):
+        self.transfers = transfers
+        self.contracts = set(contracts)
+
+    def get(self, url, params=None, timeout=None):
+        class R:
+            def __init__(self, payload):
+                self._p = payload
+
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return self._p
+
+        if "/v2/addresses/" in url:
+            addr = url.rsplit("/", 1)[1]
+            return R({"is_contract": addr in self.contracts})
+        return R({"result": self.transfers})
+
+
+def transfer(frm, to, usd, contract=USDC_CONTRACT, ts=1_760_049_619):
+    return {
+        "contractAddress": contract,
+        "from": frm,
+        "to": to,
+        "value": str(int(usd * 1e6)),
+        "tokenDecimal": "6",
+        "timeStamp": str(ts),
+    }
+
+
+def test_tracer_ignores_scam_tokens_and_finds_real_funder():
+    w = "0xa430506774f9efaf39903ee7e0db1351f66891ca"
+    stub = StubBlockscout(
+        [
+            transfer("0xbad", w, 999_999, contract=SCAM_CONTRACT),  # poison
+            transfer(PARENT, w, 40_000),
+            transfer(PARENT, w, 50_000, ts=1_760_050_000),
+        ]
+    )
+    tracer = FundingTracer(session=stub)
+    tracer._throttle = lambda: None
+    f = tracer.first_funding(w)
+    assert f is not None and f.funder == PARENT and f.usd == 40_000
+    assert f.mint is False and f.funder_is_contract is False
+
+
+def test_tracer_flags_contract_funders_and_mints():
+    w = "0xchild"
+    exchange = "0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e"
+    stub = StubBlockscout([transfer(exchange, w, 30_000)], contracts={exchange})
+    tracer = FundingTracer(session=stub)
+    tracer._throttle = lambda: None
+    f = tracer.first_funding(w)
+    assert f.funder_is_contract is True
+
+    mint = FundingTracer(session=StubBlockscout([transfer("0x" + "0" * 40, w, 830_000)]))
+    mint._throttle = lambda: None
+    fm = mint.first_funding(w)
+    assert fm.mint is True
+
+
+def test_deposit_fingerprint_tags():
+    f = Funding(
+        funder=PARENT, ts=1000, usd=100_000, token="USDC", mint=False, funder_is_contract=False
+    )
+    tags = deposit_fingerprint(f, bet_ts=1000 + 3600, bet_cash=90_000)
+    assert any(t.startswith("deposit-jit") for t in tags)
+    assert "deposit-sized-to-bet" in tags
+    assert any(t.startswith("funder(") for t in tags)
+    # slow, small bet: no jit/sized tags
+    tags2 = deposit_fingerprint(f, bet_ts=1000 + 90 * 3600, bet_cash=5_000)
+    assert not any(t.startswith("deposit-jit") for t in tags2)
+    assert "deposit-sized-to-bet" not in tags2
+    assert deposit_fingerprint(None, 0, 0) == []
+
+
+def test_coordination_book_fires_on_second_sibling():
+    book = CoordinationBook(min_wallets=2, window_secs=7 * 86400)
+    f1 = Funding(PARENT, 100, 40_000, "USDC", False, False)
+    f2 = Funding(PARENT, 200, 25_000, "USDC", False, False)
+    assert book.record(f1, "0xkid1", "tok1", 500, 19_000) is None
+    hit = book.record(f2, "0xkid2", "tok1", 900, 17_000)
+    assert hit is not None
+    assert hit.wallets == ["0xkid1", "0xkid2"]
+    assert hit.total_cash == pytest.approx(36_000)
+    # different token: no hit; mint funding: never recorded
+    assert book.record(f2, "0xkid3", "tok2", 950, 9_000) is None
+    mintf = Funding("0x" + "0" * 40, 300, 500_000, "PUSD", True)
+    assert book.record(mintf, "0xkid4", "tok1", 960, 400_000) is None
+    # survives state round-trip
+    again = CoordinationBook.from_dict(book.to_dict())
+    hit2 = again.record(
+        Funding(PARENT, 300, 30_000, "USDC", False, False), "0xkid5", "tok1", 1000, 8_000
+    )
+    assert hit2 is not None and len(hit2.wallets) == 3
+
+
+def test_scanner_coordination_alert_on_sibling_wallets(tmp_path, capsys):
+    class StubTracer:
+        def first_funding(self, wallet):
+            return Funding(PARENT, int(NOW) - 3600, 100_000, "USDC", False, False)
+
+    w2 = "0xffffb385be5667154fc69c87d8f7914be84ffff1"
+    trades = [
+        make_trade(ts=NOW - 20, tx="0xa", wallet=WALLET),
+        make_trade(ts=NOW - 5, tx="0xb", wallet=w2),
+    ]
+    state, scanner = make_scanner(
+        tmp_path, trades, fresh_profile(), with_executor=False, tracer=StubTracer()
+    )
+    scanner.poll_once(NOW)
+    out = capsys.readouterr().out
+    assert "COORDINATED CLUSTER" in out
+    assert "2 fresh wallets" in out
+    assert state.intel.get("coord_book")  # persisted for the next run
+
+
+def test_scanner_subthreshold_ring_caught_by_intel_tier(tmp_path, capsys):
+    # The Nobel-ring shape: two fresh wallets each betting UNDER the $25k
+    # alert floor. No solo alert may fire — but the same-funder coordination
+    # must, via the lower intel tier.
+    class StubTracer:
+        def first_funding(self, wallet):
+            return Funding(PARENT, int(NOW) - 7200, 25_000, "USDC", False, False)
+
+    w2 = "0xffffb385be5667154fc69c87d8f7914be84ffff1"
+    trades = [
+        make_trade(ts=NOW - 30, tx="0xs1", wallet=WALLET, size=22_000, price=0.35),  # ~$7.7k
+        make_trade(ts=NOW - 6, tx="0xs2", wallet=w2, size=24_000, price=0.35),  # ~$8.4k
+    ]
+    state, scanner = make_scanner(
+        tmp_path, trades, fresh_profile(), with_executor=False, tracer=StubTracer()
+    )
+    scanner.poll_once(NOW)
+    out = capsys.readouterr().out
+    assert "COORDINATED CLUSTER" in out
+    assert "INSIDER ALERT" not in out  # below the solo floor
+    assert state.is_watched(WALLET) and state.is_watched(w2)
+    # second poll: no re-announcement (coord key deduped)
+    scanner.poll_once(NOW + 5)
+    assert "COORDINATED CLUSTER" not in capsys.readouterr().out

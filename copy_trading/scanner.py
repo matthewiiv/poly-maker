@@ -25,12 +25,15 @@ from copy_trading.executor import CopyExecutor
 from copy_trading.market_class import MarketClassifier
 from copy_trading.signals import WalletProfile, InsiderSignal, profile_wallet, score_insider
 from copy_trading.state import StateStore
+from copy_trading.wallet_intel import CoordinationBook, FundingTracer, deposit_fingerprint
 
 # Ignore tape entries older than this by default — copying an insider minutes
 # late is already marginal; copying one from hours ago is just buying the move.
 DEFAULT_MAX_FILL_AGE_SECS = 900.0
 
 PROFILE_CACHE_TTL_SECS = 600.0
+
+_TRACER_AUTO = object()  # sentinel: build a real FundingTracer from config
 
 
 class InsiderScanner:
@@ -53,11 +56,17 @@ class InsiderScanner:
         trades_fn: Callable[..., List[dict]] = get_large_trades,
         wallet_trades_fn: Callable[..., List[dict]] = get_wallet_trades,
         classifier: Optional[MarketClassifier] = None,
+        tracer=_TRACER_AUTO,
     ):
         self.cfg = cfg
         self.state = state
         self.executor = executor
         self.max_fill_age_secs = max_fill_age_secs
+        if tracer is _TRACER_AUTO:
+            self.tracer: Optional[FundingTracer] = FundingTracer() if cfg.trace_funding else None
+        else:
+            self.tracer = tracer
+        self.coord_book = CoordinationBook.from_dict(state.intel.get("coord_book") or {})
         self.profile_fn = profile_fn
         self.trades_fn = trades_fn
         self.wallet_trades_fn = wallet_trades_fn
@@ -79,7 +88,16 @@ class InsiderScanner:
         """One pass over the tape (and watchlist wallets). Returns new-fill count."""
         now = now if now is not None else time.time()
 
-        fills = list(self.trades_fn(self.cfg.min_trade_cash, limit=100))
+        # With funding-intel on, read the tape down to the intel floor so
+        # split-order rings below the alert floor are still seen (the Nobel
+        # ring's wallets each stayed under $25k; only their coordination
+        # crossed a threshold worth alerting on).
+        tape_floor = (
+            min(self.cfg.min_trade_cash, self.cfg.intel_min_cash)
+            if self.tracer is not None
+            else self.cfg.min_trade_cash
+        )
+        fills = list(self.trades_fn(tape_floor, limit=100))
         for wallet in list(self.state.watchlist):
             try:
                 fills.extend(self.wallet_trades_fn(wallet, limit=25))
@@ -181,7 +199,12 @@ class InsiderScanner:
         if not (self.cfg.min_alert_price <= bucket.avg_price <= self.cfg.max_alert_price):
             return
 
-        if bucket.total_cash < self.cfg.min_trade_cash:
+        intel_floor = (
+            min(self.cfg.min_trade_cash, self.cfg.intel_min_cash)
+            if self.tracer is not None
+            else self.cfg.min_trade_cash
+        )
+        if bucket.total_cash < intel_floor:
             return
 
         # Classify before spending an API call on profiling: in insider-only
@@ -194,6 +217,38 @@ class InsiderScanner:
         if profile is None:
             return  # profiling failed; a later fill in this bucket retries
 
+        intel_tags: List[str] = []
+        coord_hit = self._funding_intel(bucket, profile, intel_tags, now)
+        if coord_hit is not None:
+            coord_key = f"coord:{coord_hit.funder}:{coord_hit.market_key}"
+            if coord_key not in self.state.alerted:
+                self.state.alerted[coord_key] = now
+                for sibling in coord_hit.wallets:
+                    self.state.add_to_watchlist(
+                        sibling,
+                        reason=f"same-funder cluster {coord_hit.funder[:10]}… "
+                        f"on '{bucket.title}'",
+                        source="auto",
+                    )
+                self._announce(
+                    bucket,
+                    profile,
+                    None,
+                    [
+                        f"funder {coord_hit.funder[:10]}… bankrolled "
+                        f"{len(coord_hit.wallets)} fresh wallets into this outcome "
+                        f"(${coord_hit.total_cash:,.0f} combined) — the Nobel-ring "
+                        f"pattern"
+                    ]
+                    + intel_tags,
+                    kind="COORDINATED CLUSTER",
+                )
+                self._copy(bucket)
+
+        # Below the solo-alert floor, the bucket only feeds the intel book.
+        if bucket.total_cash < self.cfg.min_trade_cash:
+            return
+
         score, reasons = score_insider(
             bucket.total_cash, bucket.avg_price, bucket.side, profile, self.cfg, now
         )
@@ -203,6 +258,7 @@ class InsiderScanner:
             reasons.append(f"insider-market({','.join(mclass.reasons[:2])})")
         else:
             reasons.append(f"market:{mclass.category}")
+        reasons.extend(intel_tags)
 
         self.state.alerted[alert_key] = now
         self.state.add_to_watchlist(
@@ -212,6 +268,27 @@ class InsiderScanner:
         )
         self._announce(bucket, profile, score, reasons, kind="INSIDER ALERT")
         self._copy(bucket)
+
+    def _funding_intel(
+        self, bucket: InsiderSignal, profile: WalletProfile, reasons: List[str], now: float
+    ):
+        """On-chain enrichment for young wallets: funder, deposit shape, and
+        the same-funder coordination check. Fail-open by design."""
+        if self.tracer is None:
+            return None
+        age = profile.age_days()
+        if age is None or age > self.cfg.young_wallet_days:
+            return None
+        try:
+            funding = self.tracer.first_funding(bucket.wallet)
+        except Exception:
+            return None
+        reasons.extend(deposit_fingerprint(funding, bucket.first_ts, bucket.total_cash))
+        hit = self.coord_book.record(
+            funding, bucket.wallet, bucket.asset, bucket.first_ts, bucket.total_cash
+        )
+        self.state.intel["coord_book"] = self.coord_book.to_dict()
+        return hit
 
     def _copy(self, bucket: InsiderSignal) -> None:
         if not self.executor:

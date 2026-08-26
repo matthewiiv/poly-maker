@@ -85,6 +85,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional price floor for alerts (red-team audit: price cuts reflect "
         "favorite-longshot bias, not insider signal — see the log)",
     )
+    det.add_argument(
+        "--no-trace-funding",
+        action="store_true",
+        help="disable on-chain funding traces and same-funder coordination "
+        "alerts (the check that catches Nobel-ring style split-wallet buying)",
+    )
+    det.add_argument(
+        "--intel-min-cash",
+        type=float,
+        default=d.intel_min_cash,
+        help="funding-trace young wallets buying at least this much in insider "
+        "markets, even below --min-cash (split-order rings stay under the "
+        "alert floor on purpose)",
+    )
 
     cp = p.add_argument_group("copying")
     cp.add_argument("--copy", action="store_true", help="plan copy orders (dry-run unless --live)")
@@ -170,6 +184,8 @@ def main(argv=None) -> int:
         insider_only=not args.all_markets,
         max_alert_price=args.max_price,
         min_alert_price=args.min_price,
+        trace_funding=not args.no_trace_funding,
+        intel_min_cash=args.intel_min_cash,
         copy_ratio=args.ratio,
         max_per_trade_usdc=args.max_per_trade,
         max_per_market_usdc=args.max_per_market,

@@ -55,6 +55,19 @@ class CopyConfig:
     # pure-noise selection null. Off by default.
     min_alert_price: float = 0.0
 
+    # Trace young alerting wallets' on-chain funding (Polygon/Blockscout) to
+    # annotate the funder and catch same-funder coordination — the structure
+    # that mapped the Oct 2025 Nobel front-running ring (log entries 10-12).
+    # Read-only enrichment; alerts still fire if the explorer is unreachable.
+    trace_funding: bool = True
+
+    # The Nobel ring's wallets each bet UNDER the $25k alert floor ($3k-$20k,
+    # split fills) — a per-fill cash floor alone never sees that ring. So
+    # young wallets buying >= this much in insider markets are funding-traced
+    # silently even below min_trade_cash; only a same-funder coordination hit
+    # escalates to an alert.
+    intel_min_cash: float = 2_500.0
+
     # --- Copying -----------------------------------------------------------
     # Fraction of the insider's cash size that we mirror (0.001 = $100 copy of a
     # $100k bet), further limited by the caps below.

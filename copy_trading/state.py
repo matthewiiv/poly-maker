@@ -31,6 +31,8 @@ class StateStore:
         self.spent_by_market: Dict[str, float] = {}  # condition_id -> committed USDC
         self.total_spent: float = 0.0
         self.total_proceeds: float = 0.0
+        # wallet-intel scratch (funding coordination book, etc.)
+        self.intel: Dict[str, dict] = {}
         self.load()
 
     # -- persistence --------------------------------------------------------
@@ -50,6 +52,7 @@ class StateStore:
         self.spent_by_market = raw.get("spent_by_market", {})
         self.total_spent = raw.get("total_spent", 0.0)
         self.total_proceeds = raw.get("total_proceeds", 0.0)
+        self.intel = raw.get("intel", {})
 
     def save(self) -> None:
         self._prune()
@@ -62,6 +65,7 @@ class StateStore:
             "spent_by_market": self.spent_by_market,
             "total_spent": self.total_spent,
             "total_proceeds": self.total_proceeds,
+            "intel": self.intel,
         }
         directory = os.path.dirname(os.path.abspath(self.path))
         os.makedirs(directory, exist_ok=True)
