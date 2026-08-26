@@ -243,7 +243,13 @@ class InsiderScanner:
                     + intel_tags,
                     kind="COORDINATED CLUSTER",
                 )
-                self._copy(bucket)
+                # Deliberately NOT copied. Economic-realism review (log entry
+                # 11) showed the coordination signal is a surveillance flag,
+                # not a trading edge: by the time it fires, the first real
+                # print sits ~10c above the ring's entry on eventual winners
+                # and below it on losers, so a copier fills the losers and
+                # misses the winners (adverse selection). It is worth watching,
+                # not copying.
 
         # Below the solo-alert floor, the bucket only feeds the intel book.
         if bucket.total_cash < self.cfg.min_trade_cash:
